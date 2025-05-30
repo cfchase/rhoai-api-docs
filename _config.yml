@@ -6,7 +6,7 @@ url: "https://cfchase.github.io"
 # Build settings
 markdown: kramdown
 highlighter: rouge
-theme: minima
+theme: just-the-docs
 
 # Collections
 collections:
