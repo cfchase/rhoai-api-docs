@@ -1,36 +1,8 @@
-title: OpenShift AI Kubernetes API Documentation
-description: Comprehensive guide for using Kubernetes API to create OpenShift AI resources and served models
-baseurl: "/rhoai-api-docs"
-url: "https://cfchase.github.io"
+title: Just the Docs Template
+description: A starter template for a Jeykll site using the Just the Docs theme!
+theme: just-the-docs
 
-# Build settings
-markdown: kramdown
-highlighter: rouge
-theme: minima
+url: https://just-the-docs.github.io
 
-# Collections
-collections:
-  docs:
-    output: true
-    permalink: /:collection/:name/
-
-# Navigation
-header_pages:
-  - index.md
-  - docs/getting-started.md
-  - docs/kubernetes-api.md
-  - docs/modelcar-serving.md
-  - docs/examples.md
-
-# Plugins
-plugins:
-  - jekyll-feed
-  - jekyll-sitemap
-
-# Kramdown settings
-kramdown:
-  input: GFM
-  syntax_highlighter: rouge
-  syntax_highlighter_opts:
-    block:
-      line_numbers: true
+aux_links:
+  Template Repository: https://github.com/just-the-docs/just-the-docs-template

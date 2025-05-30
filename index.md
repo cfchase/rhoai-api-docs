@@ -1,51 +1,35 @@
 ---
+title: Home
 layout: home
-title: OpenShift AI Kubernetes API Documentation
 ---
 
-# OpenShift AI Kubernetes API Documentation
+This is a *bare-minimum* template to create a Jekyll site that uses the [Just the Docs] theme. You can easily set the created site to be published on [GitHub Pages] – the [README] file explains how to do that, along with other details.
 
-Welcome to the comprehensive guide for using Kubernetes API to create and manage OpenShift AI resources, including served models using ModelCars.
+If [Jekyll] is installed on your computer, you can also build and preview the created site *locally*. This lets you test changes before committing them, and avoids waiting for GitHub Pages.[^1] And you will be able to deploy your local build to a different platform than GitHub Pages.
 
-## What You'll Learn
+More specifically, the created site:
 
-This documentation covers:
+- uses a gem-based approach, i.e. uses a `Gemfile` and loads the `just-the-docs` gem
+- uses the [GitHub Pages / Actions workflow] to build and publish the site on GitHub Pages
 
-- **Kubernetes API Fundamentals** - Understanding how to interact with OpenShift AI using native Kubernetes APIs
-- **ModelCar Serving** - Creating and managing served models using the ModelCar custom resource
-- **Resource Management** - Working with DataScienceCluster, Notebook, and other OpenShift AI resources
-- **Practical Examples** - Real-world YAML configurations and kubectl commands
+Other than that, you're free to customize sites that you create with this template, however you like. You can easily change the versions of `just-the-docs` and Jekyll it uses, as well as adding further plugins.
 
-## Quick Start
+[Browse our documentation][Just the Docs] to learn more about how to use this theme.
 
-1. [Getting Started](docs/getting-started) - Set up your environment and prerequisites
-2. [Kubernetes API Basics](docs/kubernetes-api) - Learn the fundamentals of OpenShift AI resources
-3. [ModelCar Serving](docs/modelcar-serving) - Deploy and serve ML models using ModelCars
-4. [Examples](docs/examples) - Complete YAML examples and use cases
+To get started with creating a site, simply:
 
-## Key Resources
+1. click "[use this template]" to create a GitHub repository
+2. go to Settings > Pages > Build and deployment > Source, and select GitHub Actions
 
-### Core OpenShift AI Custom Resources
+If you want to maintain your docs in the `docs` directory of an existing project repo, see [Hosting your docs from an existing project repo](https://github.com/just-the-docs/just-the-docs-template/blob/main/README.md#hosting-your-docs-from-an-existing-project-repo) in the template README.
 
-- **DataScienceCluster** - Main cluster configuration for OpenShift AI
-- **Notebook** - Jupyter notebook instances for data science workloads
-- **ModelCar** - Served model deployments with built-in serving runtimes
-- **InferenceService** - KServe-based model serving (alternative to ModelCar)
+----
 
-### ModelCar Benefits
+[^1]: [It can take up to 10 minutes for changes to your site to publish after you push the changes to GitHub](https://docs.github.com/en/pages/setting-up-a-github-pages-site-with-jekyll/creating-a-github-pages-site-with-jekyll#creating-your-site).
 
-ModelCars provide a simplified approach to model serving with:
-- Pre-configured serving runtimes
-- Automatic scaling and load balancing
-- Built-in monitoring and observability
-- Easy integration with OpenShift AI workflows
-
-## Prerequisites
-
-- OpenShift cluster with OpenShift AI operator installed
-- `kubectl` or `oc` CLI configured
-- Basic understanding of Kubernetes resources and YAML
-
----
-
-Ready to get started? Begin with our [Getting Started guide](docs/getting-started).
+[Just the Docs]: https://just-the-docs.github.io/just-the-docs/
+[GitHub Pages]: https://docs.github.com/en/pages
+[README]: https://github.com/just-the-docs/just-the-docs-template/blob/main/README.md
+[Jekyll]: https://jekyllrb.com
+[GitHub Pages / Actions workflow]: https://github.blog/changelog/2022-07-27-github-pages-custom-github-actions-workflows-beta/
+[use this template]: https://github.com/just-the-docs/just-the-docs-template/generate
