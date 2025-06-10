@@ -37,7 +37,7 @@ For example, you might see output like this:
 apiVersion: dashboard.opendatahub.io/v1
 kind: AcceleratorProfile
 metadata:
-  name: migrated-gpu-mglzi-serving
+  name: migrated-gpu
   namespace: redhat-ods-applications
 spec:
   displayName: "NVIDIA GPU"
@@ -49,11 +49,11 @@ spec:
     operator: Exists
 ```
 
-Note the following important values from the profile:
-- The profile name (e.g., `migrated-gpu-mglzi-serving`)
-- The GPU identifier (e.g., `nvidia.com/gpu`)
-- The tolerations configuration
+**Key Arguments:**
 
+- `metadata.name`: The unique identifier for the profile name
+- `metadata.spec.identifier`: The GPU identifier.  Will be used in the InferenceService configuration for requests/limits.
+- `metadata.spec.tolerations`: The tolerations configuration.  Will be used in the InferenceService configuration for scheduling on tainted nodes.
 
 We'll use these values in our ServingRuntime and InferenceService configurations. Make sure to replace the profile name and GPU configuration in the following steps with the values from your cluster.
 
@@ -69,10 +69,8 @@ metadata:
   annotations:
     opendatahub.io/accelerator-name: migrated-gpu
     opendatahub.io/apiProtocol: REST
-    opendatahub.io/hardware-profile-name: migrated-gpu-mglzi-serving
+    opendatahub.io/hardware-profile-name: migrated-gpu
     opendatahub.io/recommended-accelerators: '["nvidia.com/gpu"]'
-    opendatahub.io/template-display-name: vLLM NVIDIA GPU ServingRuntime for KServe
-    opendatahub.io/template-name: vllm-cuda-runtime
     openshift.io/display-name: granite
   labels:
     opendatahub.io/dashboard: 'true'
@@ -111,7 +109,20 @@ spec:
       name: shm
 ```
 
-Save this as `servingruntime-granite.yaml` and apply it:
+**Key Arguments:**
+
+- `metadata.name`: The name of your serving runtime
+- `metadata.annotations.opendatahub.io/hardware-profile-name`: Should match your accelerator profile name.
+- `metadata.annotations.opendatahub.io/recommended-accelerators`: The GPU identifier (e.g., "nvidia.com/gpu")
+- `spec.containers[0].args`: Command line arguments for the vLLM server
+  - `--port`: The port the server listens on
+  - `--model`: The path where the model will be mounted
+  - `--served-model-name`: The name of the model to serve
+- `spec.containers[0].image`: The container image for vLLM serving
+- `spec.volumes[0].emptyDir.sizeLimit`: The size limit for the shared memory volume (adjust based on model size)
+
+
+Save the customized ServingRuntime as `servingruntime-granite.yaml` and apply it:
 
 ```bash
 oc apply -n my-ds-project -f servingruntime-granite.yaml
@@ -128,6 +139,7 @@ metadata:
   name: granite
   annotations:
     openshift.io/display-name: Granite
+    security.opendatahub.io/enable-auth: 'false'
     serving.kserve.io/deploymentMode: RawDeployment
   labels:
     networking.kserve.io/visibility: exposed
@@ -158,6 +170,33 @@ spec:
         operator: Exists
 ```
 
+**Key Arguments:**
+
+- `metadata.name`: The name of your inference service
+- `metadata.annotations.openshift.io/display-name`: The display name shown in the OpenShift AI console
+- `metadata.annotations.security.opendatahub.io/enable-auth`: Set to 'false' to disable authentication.  If set to 'true', you will need to create additional authentication resources.
+- `metadata.annotations.serving.kserve.io/deploymentMode`: Set to 'RawDeployment' for direct pod management
+- `spec.predictor.maxReplicas` and `minReplicas`: Control the number of model serving instances
+- `spec.predictor.model.args`: Additional arguments for the model server
+  - `--max-model-len`: Maximum sequence length for the model
+- `spec.predictor.model.resources`: Resource allocation for the model
+  - `limits`: Maximum resources allowed
+    - `cpu`: CPU cores limit
+    - `memory`: Memory limit
+    - `nvidia.com/gpu`: Key should match the identifier from the AcceleratorProfile.  Value should be the number of GPUs per node.
+  - `requests`: Minimum resources required
+    - `cpu`: CPU cores request
+    - `memory`: Memory request
+    - `nvidia.com/gpu`: Key should match the identifier from the AcceleratorProfile.  Value should be the number of GPUs per node.
+- `spec.predictor.model.runtime`: Must match the name of your ServingRuntime
+- `spec.predictor.model.storageUri`: The location of your model
+  - Format: `oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-lab-v2:1.5`
+- `spec.predictor.tolerations`: GPU node scheduling configuration.  Should match the tolerations from the AcceleratorProfile.
+  - `effect`: Scheduling effect (NoSchedule)
+  - `key`: GPU node label key
+  - `operator`: Taint matching operator
+
+
 Save this as `inferenceservice-granite.yaml` and apply it:
 
 ```bash
@@ -179,21 +218,7 @@ oc get -n my-ds-project pods -l serving.kserve.io/inferenceservice=granite
 oc logs -n my-ds-project -l serving.kserve.io/inferenceservice=granite
 ```
 
-### Step 5: Access the Model
-
-Once the deployment is ready, you can access the model through the provided URL:
-
-```bash
-# Get the model endpoint
-MODEL_URL=$(oc get route granite-predictor -o jsonpath='{.spec.host}')
-
-# Test the model
-curl -X POST "https://$MODEL_URL/v1/models/granite:predict" \
-     -H "Content-Type: application/json" \
-     -d '{"prompt": "Hello, how are you?"}'
-```
-
-### Step 6: (Optional) Expose the Model Externally
+### Step 5: (Optional) Expose the Model Externally
 
 By default, the model is accessible within the cluster. To expose it externally, you can create a Route. Here's an example Route configuration:
 
@@ -223,6 +248,8 @@ Save this as `route-granite.yaml` and apply it:
 oc apply -n my-ds-project -f route-granite.yaml
 ```
 
+### Step 6: Access the Model
+
 After creating the Route, you can access the model using the external URL:
 
 ```bash
@@ -230,48 +257,16 @@ After creating the Route, you can access the model using the external URL:
 EXTERNAL_URL=$(oc get route granite -o jsonpath='{.spec.host}')
 
 # Test the model using the external URL
-curl -X POST "https://$EXTERNAL_URL/v1/models/granite:predict" \
-     -H "Content-Type: application/json" \
-     -d '{"prompt": "Hello, how are you?"}'
+curl -X POST "https://$EXTERNAL_URL/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "granite",
+    "messages": [
+      {"role": "user", "content": "Hello!"}
+    ],
+    "temperature": 0.1
+  }'
 ```
-
-Note: The Route uses reencrypt TLS termination, which means:
-- Traffic to the model is encrypted
-- The connection between the router and the model service is also encrypted
-- Insecure traffic is redirected to HTTPS
-
-### Configuration Details
-
-Let's break down the key components of our deployment:
-
-#### ServingRuntime Configuration
-- Uses vLLM for efficient model serving
-- Configured for GPU acceleration
-- Includes shared memory volume for better performance
-- Supports REST API protocol
-
-#### InferenceService Configuration
-- Deploys in RawDeployment mode for better control
-- Requests 1 GPU and 16Gi memory
-- Sets maximum model length to 4096 tokens
-- Uses the pre-built Granite model from Red Hat's registry
-- Includes GPU tolerations for proper scheduling
-
-### Monitoring and Management
-
-#### Viewing Metrics
-```bash
-# Check resource usage
-oc top pods -n my-ds-project -l serving.kserve.io/inferenceservice=granite
-
-# Get events
-oc get events -n my-ds-project --field-selector involvedObject.name=granite
-```
-
-#### Common Status Conditions
-- **PredictorReady** - Model is loaded and ready to serve
-- **IngressReady** - Ingress/Route is configured
-- **Ready** - Overall service is ready
 
 ### Troubleshooting
 
@@ -283,16 +278,6 @@ oc describe pod -n my-ds-project -l serving.kserve.io/inferenceservice=granite
 oc logs -n my-ds-project -l serving.kserve.io/inferenceservice=granite
 ```
 
-2. Verify GPU allocation:
-```bash
-oc describe node | grep nvidia.com/gpu
-```
-
-3. Check model loading:
-```bash
-oc describe inferenceservice granite | grep -A 10 "Model"
-```
-
 ### Cleanup
 
 To remove the deployment:
@@ -300,13 +285,11 @@ To remove the deployment:
 ```bash
 oc delete inferenceservice granite
 oc delete servingruntime granite
+
+#optionally delete the route
+oc delete route granite
 ```
 
-## Next Steps
-
-- [Examples](examples) - More deployment scenarios
-- [Kubernetes API Basics](kubernetes-api) - Understanding the underlying APIs
-- [Model Monitoring](monitoring) - Setting up monitoring and observability
 
 
 
