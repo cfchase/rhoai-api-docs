@@ -1,5 +1,8 @@
 .tmp/
 
+# Claude
+.claude/
+
 # Jekyll build outputs
 _site/
 .sass-cache/
