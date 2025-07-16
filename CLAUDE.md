@@ -34,29 +34,104 @@ The site automatically deploys to GitHub Pages when changes are pushed to the ma
 
 ### Documentation Structure
 - **docs/**: Main documentation content
-  - `projects.md`: Tutorial for creating Data Science Projects
+  - `projects.md`: **Reference implementation** - Comprehensive guide for Data Science Projects with full CRUD operations
   - `modelcar-serving.md`: Comprehensive guide for ML model deployment with KServe
 - **index.md**: Homepage (currently minimal)
 
 ### Deployment
 - **.github/workflows/pages.yml**: Automated GitHub Pages deployment on push to main
 
-## Key Development Patterns
+## Documentation Standards
 
-### Adding New Documentation
-1. Create markdown files in the `docs/` directory
-2. Add front matter with `layout: default`, `title`, and `nav_order`
-3. Follow the existing pattern of providing:
-   - Clear explanations of concepts
-   - Complete YAML examples with inline comments
-   - Step-by-step instructions with kubectl commands
-   - Troubleshooting sections
+### Reference Implementation: projects.md
+The `docs/projects.md` file serves as the gold standard for all documentation in this repository. All new documentation should follow its comprehensive structure and approach.
+
+### Required Documentation Structure
+Every API resource documentation MUST include these sections in order:
+
+1. **Title and Introduction**
+   - Clear description of what the resource is
+   - Its purpose in OpenShift AI context
+   - Key features/capabilities enabled
+
+2. **Overview Section**
+   - Conceptual explanation
+   - Relationship to other resources
+   - Required labels/annotations explained
+
+3. **Complete CRUD Operations**
+   - **Creating**: Both declarative (YAML) and imperative (commands) methods
+   - **Listing/Viewing**: Various ways to query and filter
+   - **Updating**: Multiple update methods (apply, edit, patch, label, annotate)
+   - **Deleting**: Safe deletion practices with warnings
+
+4. **Examples Section**
+   - Basic example (minimal configuration)
+   - Standard example (common use case)
+   - Advanced example (production-ready with all features)
+   - Real-world scenarios
+
+5. **Verification and Troubleshooting**
+   - How to verify successful operations
+   - Common issues and solutions
+   - Permission checking
+   - Debugging tips
+
+6. **Best Practices**
+   - Naming conventions
+   - Label and annotation strategies
+   - Security considerations
+   - When to use declarative vs imperative
+
+7. **Field Reference Table**
+   - Complete field documentation
+   - Type, Required/Optional, Description, Examples
+   - Common custom annotations table
+
+8. **MCP Server Compatibility Section**
+   - Tool mapping table
+   - Adapted commands for each CRUD operation
+   - MCP limitations and workarounds
+   - Best practices for MCP usage
+
+9. **Related Resources**
+   - Links to official documentation
+   - Related guides
+
+### Documentation Guidelines
+
+#### For Human Readability
+- Use progressive examples (simple → complex)
+- Include troubleshooting for each operation
+- Provide clear command syntax with all options explained
+- Add practical, real-world scenarios
+- Use consistent formatting and terminology
+
+#### For LLM Compatibility
+- Structure data in tables where appropriate
+- Use consistent YAML formatting with proper indentation
+- Include inline comments in all YAML examples
+- Provide complete field references with types
+- Use code blocks with language identifiers
+
+#### For MCP Server Compatibility
+- Always include MCP tool mappings
+- Show how to adapt kubectl commands to MCP tools
+- Document MCP limitations clearly
+- Provide workarounds for unsupported operations
 
 ### YAML Examples Convention
 - Always include complete, working YAML manifests
-- Add inline comments explaining non-obvious fields
-- Use real resource names and namespaces that match OpenShift AI patterns
+- Add inline comments explaining every non-obvious field
+- Use meaningful names that indicate purpose
+- Show progression: basic → standard → advanced
 - Include both minimal and production-ready examples
+
+### Command Examples Convention
+- Show both `kubectl` and `oc` commands where applicable
+- Include all relevant flags and options
+- Provide output examples for verification
+- Group related commands logically
 
 ### OpenShift AI Resources
 The documentation covers these custom resources:
@@ -112,15 +187,17 @@ This repository follows the llmstxt.org standard for providing LLM-friendly docu
 
 ### Updating LLM Files
 When documentation changes:
-1. Update llms.txt manually if the project overview or key APIs change
-2. Regenerate llms-full.txt using the generation script: `./generate-llms-full.sh`
-3. Ensure both files remain in the root directory
+1. Run the generation script: `./generate-llms-txt.sh`
+2. Review the updated llms.txt to ensure descriptions are accurate
+3. Manually edit llms.txt header if the project overview changes
+4. Ensure both files remain in the root directory
 
-The `generate-llms-full.sh` script automatically:
+The `generate-llms-txt.sh` script automatically:
 - Finds all markdown files with nav_order in frontmatter
 - Sorts them by nav_order
-- Concatenates content without frontmatter
-- Creates llms-full.txt in the root directory
+- Generates llms-full.txt by concatenating content without frontmatter
+- Updates the Docs section in llms.txt with current document titles, links, and descriptions
+- Preserves the rest of llms.txt content (header, overview, etc.)
 
 ## Git Commit Guidelines
 

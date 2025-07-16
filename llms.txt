@@ -6,5 +6,6 @@ This documentation provides practical, YAML-based tutorials for deploying AI/ML 
 
 ## Docs
 
-- [Data Science Projects](https://cfchase.github.io/rhoai-api-docs/docs/projects): Create isolated environments for data science work using Project API with proper labels and annotations
-- [ModelCar Serving](https://cfchase.github.io/rhoai-api-docs/docs/modelcar-serving): Deploy Granite LLMs with GPU support using ServingRuntime and InferenceService resources
+- [Projects](https://cfchase.github.io/rhoai-api-docs/docs/projects): Data Science Projects in Red Hat OpenShift AI provide isolated environments for organizing your machine learning work. These projects are OpenShift projects (Kubernetes namespaces) with specific labels and annotations that enable integration with the OpenShift AI dashboard and features.
+- [ModelCars](https://cfchase.github.io/rhoai-api-docs/docs/modelcar-serving): ModelCars provide a simplified way to deploy and serve machine learning models on OpenShift AI using the KServe infrastructure with pre-configured serving runtimes.
+
