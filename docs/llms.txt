@@ -1,0 +1,10 @@
+# Red Hat OpenShift AI API Documentation
+
+> Comprehensive guides for using Kubernetes APIs to create and manage OpenShift AI resources, including Data Science Projects and ML model deployment with KServe.
+
+This documentation provides practical, YAML-based tutorials for deploying AI/ML workloads on OpenShift using native Kubernetes APIs. It focuses on real-world scenarios with GPU-accelerated model serving using vLLM and Red Hat's pre-configured model containers.
+
+## Docs
+
+- [Data Science Projects](https://cfchase.github.io/rhoai-api-docs/docs/projects): Create isolated environments for data science work using Project API with proper labels and annotations
+- [ModelCar Serving](https://cfchase.github.io/rhoai-api-docs/docs/modelcar-serving): Deploy Granite LLMs with GPU support using ServingRuntime and InferenceService resources
