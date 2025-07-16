@@ -1,4 +1,4 @@
-# OpenShift AI Kubernetes API Documentation
+# OpenShift AI API Documentation
 
 
 # Data Science Projects

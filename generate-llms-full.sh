@@ -11,7 +11,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Output file
-OUTPUT_FILE="docs/llms-full.txt"
+OUTPUT_FILE="llms-full.txt"
 
 # Temporary file for sorting
 TEMP_FILE=$(mktemp)
