@@ -18,34 +18,19 @@ metadata:
   name: my-ds-project
   labels:
     kubernetes.io/metadata.name: my-ds-project
-    modelmesh-enabled: 'false'
     opendatahub.io/dashboard: 'true'
   annotations:
     openshift.io/description: 'My Data Science Project'
     openshift.io/display-name: My DS Project
-    openshift.io/requester: admin
 spec: {}
 ```
 
 ### Key Arguments
 
 - `metadata.name`: The unique identifier for your project (must be lowercase and can contain hyphens)
-- `metadata.labels.modelmesh-enabled`: Controls ModelMesh serving capability ('true' or 'false').  Generally set to 'false' as modelmesh is deprecated.
 - `metadata.annotations.'openshift.io/display-name'`: Human-readable name for the project
 - `metadata.annotations.'openshift.io/description'`: Optional project description
-- `metadata.annotations.'openshift.io/requester'`: The user who requested the project
 
-### Creating Your Project
-
-To create a new project:
-
-1. Create a YAML file (e.g., `my-project.yaml`) with your desired configuration
-2. Apply the configuration using the OpenShift CLI:
-   ```bash
-   oc apply -f my-project.yaml
-   ```
-
-For more advanced configurations, refer to the [OpenShift Documentation](https://docs.openshift.com/).
 
 # Serving Models with ModelCars
 
@@ -68,10 +53,10 @@ Before deploying the model, we need to check the available AcceleratorProfiles i
 
 ```bash
 # List available accelerator profiles
-oc get acceleratorprofiles -n redhat-ods-applications
+kubectl get acceleratorprofiles -n redhat-ods-applications
 
 # Get detailed information about a specific profile
-oc get acceleratorprofile <profile-name> -n redhat-ods-applications -o yaml
+kubectl get acceleratorprofile <profile-name> -n redhat-ods-applications -o yaml
 ```
 
 For example, you might see output like this:
@@ -153,7 +138,7 @@ spec:
 
 **Key Arguments:**
 
-- `metadata.name`: The name of your serving runtime
+- `metadata.name`: The name of your serving runtime, this should match the name of your InferenceService.
 - `metadata.annotations.opendatahub.io/hardware-profile-name`: Should match your accelerator profile name.
 - `metadata.annotations.opendatahub.io/recommended-accelerators`: The GPU identifier (e.g., "nvidia.com/gpu")
 - `spec.containers[0].args`: Command line arguments for the vLLM server
@@ -164,11 +149,7 @@ spec:
 - `spec.volumes[0].emptyDir.sizeLimit`: The size limit for the shared memory volume (adjust based on model size)
 
 
-Save the customized ServingRuntime as `servingruntime-granite.yaml` and apply it:
-
-```bash
-oc apply -n my-ds-project -f servingruntime-granite.yaml
-```
+Create your the ServingRuntime using your customized YAML.
 
 ### Step 3: Deploy the InferenceService
 
@@ -214,7 +195,7 @@ spec:
 
 **Key Arguments:**
 
-- `metadata.name`: The name of your inference service
+- `metadata.name`: The name of your inference service, this should match the name of your ServingRuntime.
 - `metadata.annotations.openshift.io/display-name`: The display name shown in the OpenShift AI console
 - `metadata.annotations.security.opendatahub.io/enable-auth`: Set to 'false' to disable authentication.  If set to 'true', you will need to create additional authentication resources.
 - `metadata.annotations.serving.kserve.io/deploymentMode`: Set to 'RawDeployment' for direct pod management
@@ -231,7 +212,7 @@ spec:
     - `memory`: Memory request
     - `nvidia.com/gpu`: Key should match the identifier from the AcceleratorProfile.  Value should be the number of GPUs per node.
 - `spec.predictor.model.runtime`: Must match the name of your ServingRuntime
-- `spec.predictor.model.storageUri`: The location of your model
+- `spec.predictor.model.storageUri`: The location of your model.  For a list of available models, see the [Appendix: Available ModelCars](#appendix-available-modelcars) section.
   - Format: `oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-lab-v2:1.5`
 - `spec.predictor.tolerations`: GPU node scheduling configuration.  Should match the tolerations from the AcceleratorProfile.
   - `effect`: Scheduling effect (NoSchedule)
@@ -239,10 +220,10 @@ spec:
   - `operator`: Taint matching operator
 
 
-Save this as `inferenceservice-granite.yaml` and apply it:
+Create your the InferenceService using your customized YAML.
 
 ```bash
-oc apply -n my-ds-project -f inferenceservice-granite.yaml
+kubectl apply -n my-ds-project -f inferenceservice-granite.yaml
 ```
 
 ### Step 4: Verify the Deployment
@@ -251,13 +232,13 @@ Check the status of your deployment:
 
 ```bash
 # Check the InferenceService status
-oc get -n my-ds-project inferenceservice granite
+kubectl get -n my-ds-project inferenceservice granite
 
 # Check the pods
-oc get -n my-ds-project pods -l serving.kserve.io/inferenceservice=granite
+kubectl get -n my-ds-project pods -l serving.kserve.io/inferenceservice=granite
 
 # View the logs
-oc logs -n my-ds-project -l serving.kserve.io/inferenceservice=granite
+kubectl logs -n my-ds-project -l serving.kserve.io/inferenceservice=granite
 ```
 
 ### Step 5: (Optional) Expose the Model Externally
@@ -284,10 +265,10 @@ spec:
   wildcardPolicy: None
 ```
 
-Save this as `route-granite.yaml` and apply it:
+Create the route using your customized YAML.
 
 ```bash
-oc apply -n my-ds-project -f route-granite.yaml
+kubectl apply -n my-ds-project -f route-granite.yaml
 ```
 
 ### Step 6: Access the Model
@@ -296,7 +277,7 @@ After creating the Route, you can access the model using the external URL:
 
 ```bash
 # Get the external URL
-EXTERNAL_URL=$(oc get route granite -o jsonpath='{.spec.host}')
+EXTERNAL_URL=$(kubectl get route granite -o jsonpath='{.spec.host}')
 
 # Test the model using the external URL
 curl -X POST "https://$EXTERNAL_URL/v1/chat/completions" \
@@ -316,8 +297,8 @@ If you encounter issues:
 
 1. Check pod status and logs:
 ```bash
-oc describe pod -n my-ds-project -l serving.kserve.io/inferenceservice=granite
-oc logs -n my-ds-project -l serving.kserve.io/inferenceservice=granite
+kubectl describe pod -n my-ds-project -l serving.kserve.io/inferenceservice=granite
+kubectl logs -n my-ds-project -l serving.kserve.io/inferenceservice=granite
 ```
 
 ### Cleanup
@@ -325,9 +306,76 @@ oc logs -n my-ds-project -l serving.kserve.io/inferenceservice=granite
 To remove the deployment:
 
 ```bash
-oc delete inferenceservice granite
-oc delete servingruntime granite
+kubectl delete inferenceservice granite
+kubectl delete servingruntime granite
 
 #optionally delete the route
-oc delete route granite
+kubectl delete route granite
 ```
+
+## Appendix: Available ModelCars
+
+The following table lists all available pre-built ModelCars from Red Hat's validated models collection. These models are optimized for deployment on OpenShift AI and can be used directly in the `storageUri` field of your InferenceService configuration.
+
+| Model ID | ModelCar URI |
+|----------|-------------|
+| `RedHatAI/Llama-4-Scout-17B-16E-Instruct-FP8-dynamic` | `oci://registry.redhat.io/rhelai1/modelcar-llama-4-scout-17b-16e-instruct-fp8-dynamic:1.5` |
+| `RedHatAI/Llama-4-Scout-17B-16E-Instruct-quantized.w4a16` | `oci://registry.redhat.io/rhelai1/modelcar-llama-4-scout-17b-16e-instruct-quantized-w4a16:1.5` |
+| `RedHatAI/Llama-4-Scout-17B-16E-Instruct` | `oci://registry.redhat.io/rhelai1/modelcar-llama-4-scout-17b-16e-instruct:1.5` |
+| `RedHatAI/Llama-4-Maverick-17B-128E-Instruct` | `oci://registry.redhat.io/rhelai1/modelcar-llama-4-maverick-17b-128e-instruct:1.5` |
+| `RedHatAI/Llama-4-Maverick-17B-128E-Instruct-FP8` | `oci://registry.redhat.io/rhelai1/modelcar-llama-4-maverick-17b-128e-instruct-fp8:1.5` |
+| `RedHatAI/Mistral-Small-3.1-24B-Instruct-2503-FP8-dynamic` | `oci://registry.redhat.io/rhelai1/modelcar-mistral-small-3-1-24b-instruct-2503-fp8-dynamic:1.5` |
+| `RedHatAI/Mistral-Small-3.1-24B-Instruct-2503-quantized.w8a8` | `oci://registry.redhat.io/rhelai1/modelcar-mistral-small-3-1-24b-instruct-2503-quantized-w8a8:1.5` |
+| `RedHatAI/Mistral-Small-3.1-24B-Instruct-2503-quantized.w4a16` | `oci://registry.redhat.io/rhelai1/modelcar-mistral-small-3-1-24b-instruct-2503-quantized-w4a16:1.5` |
+| `RedHatAI/Mistral-Small-3.1-24B-Instruct-2503` | `oci://registry.redhat.io/rhelai1/modelcar-mistral-small-3-1-24b-instruct-2503:1.5` |
+| `RedHatAI/Mistral-Small-24B-Instruct-2501-FP8-dynamic` | `oci://registry.redhat.io/rhelai1/modelcar-mistral-small-24b-instruct-2501-fp8-dynamic:1.5` |
+| `RedHatAI/Mistral-Small-24B-Instruct-2501-quantized.w8a8` | `oci://registry.redhat.io/rhelai1/modelcar-mistral-small-24b-instruct-2501-quantized-w8a8:1.5` |
+| `RedHatAI/Mistral-Small-24B-Instruct-2501` | `oci://registry.redhat.io/rhelai1/modelcar-mistral-small-24b-instruct-2501:1.5` |
+| `RedHatAI/phi-4` | `oci://registry.redhat.io/rhelai1/modelcar-phi-4:1.5` |
+| `RedHatAI/phi-4-quantized.w4a16` | `oci://registry.redhat.io/rhelai1/modelcar-phi-4-quantized-w4a16:1.5` |
+| `RedHatAI/phi-4-quantized.w8a8` | `oci://registry.redhat.io/rhelai1/modelcar-phi-4-quantized-w8a8:1.5` |
+| `RedHatAI/phi-4-FP8-dynamic` | `oci://registry.redhat.io/rhelai1/modelcar-phi-4-fp8-dynamic:1.5` |
+| `RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic` | `oci://registry.redhat.io/rhelai1/modelcar-llama-3-3-70b-instruct-fp8-dynamic:1.5` |
+| `RedHatAI/Llama-3.3-70B-Instruct` | `oci://registry.redhat.io/rhelai1/modelcar-llama-3-3-70b-instruct:1.5` |
+| `RedHatAI/granite-3.1-8b-instruct-FP8-dynamic` | `oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct-fp8-dynamic:1.5` |
+| `RedHatAI/granite-3.1-8b-instruct` | `oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.5` |
+| `RedHatAI/Qwen2.5-7B-Instruct-FP8-dynamic` | `oci://registry.redhat.io/rhelai1/modelcar-qwen2-5-7b-instruct-fp8-dynamic:1.5` |
+| `RedHatAI/Qwen2.5-7B-Instruct` | `oci://registry.redhat.io/rhelai1/modelcar-qwen2-5-7b-instruct:1.5` |
+| `RedHatAI/Llama-3.1-8B-Instruct` | `oci://registry.redhat.io/rhelai1/modelcar-llama-3-1-8b-instruct:1.5` |
+| `RedHatAI/Llama-3.1-Nemotron-70B-Instruct-HF-FP8-dynamic` | `oci://registry.redhat.io/rhelai1/modelcar-llama-3-1-nemotron-70b-instruct-hf-fp8-dynamic:1.5` |
+| `RedHatAI/Mixtral-8x7B-Instruct-v0.1` | `oci://registry.redhat.io/rhelai1/modelcar-mixtral-8x7b-instruct-v0-1:1.4` |
+| `RedHatAI/Llama-3.1-Nemotron-70B-Instruct-HF` | `oci://registry.redhat.io/rhelai1/modelcar-llama-3-1-nemotron-70b-instruct-hf:1.5` |
+| `RedHatAI/Llama-3.3-70B-Instruct-quantized.w8a8` | `oci://registry.redhat.io/rhelai1/modelcar-llama-3-3-70b-instruct-quantized-w8a8:1.5` |
+| `RedHatAI/Llama-3.3-70B-Instruct-quantized.w4a16` | `oci://registry.redhat.io/rhelai1/modelcar-llama-3-3-70b-instruct-quantized-w4a16:1.5` |
+| `RedHatAI/granite-3.1-8b-instruct-quantized.w8a8` | `oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct-quantized-w8a8:1.5` |
+| `RedHatAI/granite-3.1-8b-instruct-quantized.w4a16` | `oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct-quantized-w4a16:1.5` |
+| `RedHatAI/Qwen2.5-7B-Instruct-quantized.w8a8` | `oci://registry.redhat.io/rhelai1/modelcar-qwen2-5-7b-instruct-quantized-w8a8:1.5` |
+| `RedHatAI/Qwen2.5-7B-Instruct-quantized.w4a16` | `oci://registry.redhat.io/rhelai1/modelcar-qwen2-5-7b-instruct-quantized-w4a16:1.5` |
+| `RedHatAI/granite-3.1-8b-base-quantized.w4a16` | `oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-base-quantized-w4a16:1.5` |
+| `RedHatAI/Mistral-Small-24B-Instruct-2501-quantized.w4a16` | `oci://registry.redhat.io/rhelai1/modelcar-mistral-small-24b-instruct-2501-quantized-w4a16:1.5` |
+| `RedHatAI/Meta-Llama-3.1-8B-Instruct-quantized.w8a8` | `oci://registry.redhat.io/rhelai1/modelcar-llama-3-1-8b-instruct-quantized-w8a8:1.5` |
+| `RedHatAI/Meta-Llama-3.1-8B-Instruct-FP8-dynamic` | `oci://registry.redhat.io/rhelai1/modelcar-llama-3-1-8b-instruct-fp8-dynamic:1.5` |
+| `RedHatAI/Meta-Llama-3.1-8B-Instruct-quantized.w4a16` | `oci://registry.redhat.io/rhelai1/modelcar-llama-3-1-8b-instruct-quantized-w4a16:1.5` |
+| `RedHatAI/gemma-2-9b-it-FP8` | `oci://registry.redhat.io/rhelai1/modelcar-gemma-2-9b-it-FP8:1.5` |
+| `RedHatAI/gemma-2-9b-it` | `oci://registry.redhat.io/rhelai1/modelcar-gemma-2-9b-it:1.5` |
+
+### Usage Notes
+
+- **Model Selection**: Choose models based on your hardware constraints and performance requirements
+- **Quantization**: Models with `FP8-dynamic`, `w4a16`, or `w8a8` quantization require less GPU memory
+- **GPU Requirements**: Larger models (70B parameters) require more GPU memory and compute resources
+- **Version**: Most models use version `1.5`, except `Mixtral-8x7B-Instruct-v0.1` which uses `1.4`
+- **Registry**: All models are hosted in the Red Hat registry at `registry.redhat.io/rhelai1/`
+
+### Example Usage
+
+To use any of these models in your InferenceService, simply replace the `storageUri` field:
+
+```yaml
+spec:
+  predictor:
+    model:
+      storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.5'
+```
+
+For more information about each model, visit the [Red Hat AI validated models collection](https://huggingface.co/collections/RedHatAI/red-hat-ai-validated-models-v10-682613dc19c4a596dbac9437) on Hugging Face.
