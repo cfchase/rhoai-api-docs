@@ -81,7 +81,7 @@ if [ -f "index.md" ]; then
 fi
 
 # Process all .md files in docs directory
-for file in docs/*.md; do
+for file in docs/*.md docs/**/*.md; do
     if [ -f "$file" ]; then
         nav_order=$(get_nav_order "$file")
         if [ -n "$nav_order" ]; then

@@ -1,8 +1,9 @@
 ---
 layout: page
 title: ModelCars
-nav_order: 3
-permalink: /docs/modelcar-serving/
+parent: Serving
+nav_order: 1
+permalink: /docs/serving/modelcar/
 ---
 
 # Serving Models with ModelCars

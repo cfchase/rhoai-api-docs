@@ -52,7 +52,7 @@ bundle exec jekyll build
 ├── _docs/                   # Documentation pages
 │   ├── getting-started.md
 │   ├── kubernetes-api.md
-│   ├── modelcar-serving.md
+│   ├── serving/modelcar.md
 │   └── examples.md
 ├── _includes/               # Reusable components
 │   └── navigation.html

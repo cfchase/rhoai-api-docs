@@ -35,7 +35,7 @@ The site automatically deploys to GitHub Pages when changes are pushed to the ma
 ### Documentation Structure
 - **docs/**: Main documentation content
   - `projects.md`: **Reference implementation** - Comprehensive guide for Data Science Projects with full CRUD operations
-  - `modelcar-serving.md`: Comprehensive guide for ML model deployment with KServe
+  - `serving/modelcar.md`: Comprehensive guide for ML model deployment with KServe
 - **index.md**: Homepage (currently minimal)
 
 ### Deployment
