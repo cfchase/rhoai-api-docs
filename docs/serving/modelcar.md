@@ -30,7 +30,26 @@ A complete model serving deployment in OpenShift AI consists of three key resour
    - Configures TLS termination
    - Enables secure external access
 
-These resources must be created together to deploy a functional model serving endpoint. The ServingRuntime and InferenceService names typically match for clarity, and together they create the pods, services, and other Kubernetes resources needed to serve your model.
+These resources must be created together to deploy a functional model serving endpoint. **Important**: The ServingRuntime and InferenceService names MUST match exactly - this is a requirement for the OpenShift AI dashboard to properly display and manage the model deployment. Together they create the pods, services, and other Kubernetes resources needed to serve your model.
+
+## Important: Naming Convention
+
+**The ServingRuntime and InferenceService names MUST be identical.** This is a critical requirement for the OpenShift AI dashboard to properly:
+- Display the model deployment
+- Show serving runtime details
+- Enable management features
+- Link the resources correctly
+
+For example, if your InferenceService is named `granite-model`, then your ServingRuntime must also be named `granite-model`. This naming convention is enforced throughout all examples in this guide.
+
+### Template Variables in ServingRuntime
+
+OpenShift AI provides template variables that get replaced at runtime with values from the InferenceService:
+
+- `{{.Name}}` - The name of the InferenceService
+- Common usage: `--served-model-name={{.Name}}` in vLLM args
+
+This ensures the model server uses the same name as the InferenceService, maintaining consistency across the deployment.
 
 ## Prerequisites
 
@@ -107,63 +126,10 @@ The declarative approach uses YAML files to define your model serving stack. Thi
 
 #### Basic Model Deployment
 
-A minimal deployment with ServingRuntime and InferenceService:
+A standard deployment with GPU acceleration:
 
 ```yaml
 # serving-basic.yaml
-apiVersion: v1
-kind: List
-items:
-  # ServingRuntime - defines HOW to serve models
-  - apiVersion: serving.kserve.io/v1alpha1
-    kind: ServingRuntime
-    metadata:
-      name: my-model-runtime
-      labels:
-        opendatahub.io/dashboard: 'true'
-    spec:
-      containers:
-        - name: kserve-container
-          image: 'quay.io/modh/vllm:rhoai-2.20-cuda'
-          args:
-            - '--port=8080'
-            - '--model=/mnt/models'
-            - '--served-model-name=my-model'
-          command:
-            - python
-            - '-m'
-            - vllm.entrypoints.openai.api_server
-      supportedModelFormats:
-        - name: vLLM
-          autoSelect: true
-
-  # InferenceService - defines WHAT model to serve
-  - apiVersion: serving.kserve.io/v1beta1
-    kind: InferenceService
-    metadata:
-      name: my-model
-      labels:
-        opendatahub.io/dashboard: 'true'
-    spec:
-      predictor:
-        model:
-          modelFormat:
-            name: vLLM
-          runtime: my-model-runtime
-          storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.5'
-```
-
-Apply the deployment:
-```bash
-kubectl apply -f serving-basic.yaml -n my-namespace
-```
-
-#### Standard Model Deployment with GPU
-
-A typical production deployment with GPU acceleration:
-
-```yaml
-# serving-standard.yaml
 apiVersion: v1
 kind: List
 items:
@@ -171,43 +137,45 @@ items:
   - apiVersion: serving.kserve.io/v1alpha1
     kind: ServingRuntime
     metadata:
-      name: granite-runtime
+      name: granite-model  # Must match InferenceService name
       annotations:
-        opendatahub.io/accelerator-name: migrated-gpu
-        opendatahub.io/recommended-accelerators: '["nvidia.com/gpu"]'
+        # GPU-specific annotations for dashboard integration
+        opendatahub.io/accelerator-name: migrated-gpu  # Links to AcceleratorProfile
+        opendatahub.io/recommended-accelerators: '["nvidia.com/gpu"]'  # GPU types supported
         openshift.io/display-name: Granite Model Runtime
       labels:
-        opendatahub.io/dashboard: 'true'
+        opendatahub.io/dashboard: 'true'  # Shows in OpenShift AI dashboard
     spec:
       annotations:
+        # Prometheus monitoring for production deployments
         prometheus.io/path: /metrics
         prometheus.io/port: '8080'
       containers:
         - name: kserve-container
-          image: 'quay.io/modh/vllm:rhoai-2.20-cuda'
+          image: 'quay.io/modh/vllm:rhoai-2.20-cuda'  # CUDA-enabled vLLM image
           args:
             - '--port=8080'
             - '--model=/mnt/models'
-            - '--served-model-name=my-model'
-            - '--tensor-parallel-size=1'
+            - '--served-model-name={{.Name}}'  # Uses InferenceService name
+            - '--tensor-parallel-size=1'  # GPU parallelism setting
           command:
             - python
             - '-m'
             - vllm.entrypoints.openai.api_server
           env:
             - name: HF_HOME
-              value: /tmp/hf_home
+              value: /tmp/hf_home  # Cache directory for model files
           ports:
             - containerPort: 8080
               protocol: TCP
           volumeMounts:
-            - mountPath: /dev/shm
+            - mountPath: /dev/shm  # Shared memory for GPU operations
               name: shm
       supportedModelFormats:
         - name: vLLM
           autoSelect: true
       volumes:
-        - name: shm
+        - name: shm  # Shared memory volume for GPU performance
           emptyDir:
             medium: Memory
             sizeLimit: 2Gi
@@ -219,7 +187,7 @@ items:
       name: granite-model
       annotations:
         openshift.io/display-name: Granite 3.1 8B Model
-        serving.kserve.io/deploymentMode: RawDeployment
+        serving.kserve.io/deploymentMode: RawDeployment  # Direct pod deployment
       labels:
         opendatahub.io/dashboard: 'true'
     spec:
@@ -229,24 +197,93 @@ items:
         model:
           modelFormat:
             name: vLLM
-          runtime: granite-runtime
+          runtime: granite-model  # Must match InferenceService name
           storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.5'
           args:
-            - '--max-model-len=4096'
-          resources:
+            - '--max-model-len=4096'  # Model-specific context length
+          resources:  # GPU resource requirements
             requests:
               cpu: '2'
               memory: 16Gi
-              nvidia.com/gpu: '1'
+              nvidia.com/gpu: '1'  # Request 1 NVIDIA GPU
             limits:
               cpu: '8'
               memory: 24Gi
-              nvidia.com/gpu: '1'
-        tolerations:
+              nvidia.com/gpu: '1'  # Limit to 1 NVIDIA GPU
+        tolerations:  # GPU node scheduling
           - effect: NoSchedule
             key: nvidia.com/gpu
             operator: Exists
 ```
+
+Apply the deployment:
+```bash
+kubectl apply -f serving-basic.yaml -n my-namespace
+```
+
+#### Alternative Runtime Images
+
+The examples above use `quay.io/modh/vllm:rhoai-2.20-cuda` for NVIDIA GPUs. OpenShift AI provides different runtime images for various architectures:
+
+- **NVIDIA GPUs**: `quay.io/modh/vllm:rhoai-2.20-cuda`
+- **AMD GPUs**: `quay.io/modh/vllm:rhoai-2.20-rocm`
+- **Intel Habana**: `quay.io/modh/vllm:rhoai-2.20-gaudi`
+- **CPU only**: `quay.io/modh/vllm:rhoai-2.20-cpu`
+
+Example deployment for AMD GPUs:
+
+```yaml
+# serving-amd-gpu.yaml
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: serving.kserve.io/v1alpha1
+    kind: ServingRuntime
+    metadata:
+      name: amd-model  # Must match InferenceService name
+      annotations:
+        # AMD GPU-specific accelerator type
+        opendatahub.io/recommended-accelerators: '["amd.com/gpu"]'  # AMD instead of NVIDIA
+      labels:
+        opendatahub.io/dashboard: 'true'
+    spec:
+      containers:
+        - name: kserve-container
+          # ROCm-specific image for AMD GPU support
+          image: 'quay.io/modh/vllm:rhoai-2.20-rocm'  # ROCm instead of CUDA
+          args:
+            - '--port=8080'
+            - '--model=/mnt/models'
+            - '--served-model-name={{.Name}}'
+          command:
+            - python
+            - '-m'
+            - vllm.entrypoints.openai.api_server
+          resources:
+            limits:
+              amd.com/gpu: '1'  # AMD GPU resource identifier
+      supportedModelFormats:
+        - name: vLLM
+          autoSelect: true
+  
+  - apiVersion: serving.kserve.io/v1beta1
+    kind: InferenceService
+    metadata:
+      name: amd-model
+      labels:
+        opendatahub.io/dashboard: 'true'
+    spec:
+      predictor:
+        model:
+          modelFormat:
+            name: vLLM
+          runtime: amd-model
+          storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.5'
+          resources:
+            limits:
+              amd.com/gpu: '1'  # Must match the GPU type in ServingRuntime
+```
+
 
 #### Advanced Model Deployment with Route and Authentication
 
@@ -257,34 +294,37 @@ A complete production deployment with external access and authentication:
 apiVersion: v1
 kind: List
 items:
-  # ServingRuntime with full configuration
+  # ServingRuntime with full production configuration
   - apiVersion: serving.kserve.io/v1alpha1
     kind: ServingRuntime
     metadata:
-      name: llama-runtime
+      name: llama-model  # Must match InferenceService name
       annotations:
-        opendatahub.io/accelerator-name: nvidia-a100
+        # Advanced GPU configuration
+        opendatahub.io/accelerator-name: nvidia-a100  # Specific GPU model
         opendatahub.io/apiProtocol: REST
         opendatahub.io/recommended-accelerators: '["nvidia.com/gpu"]'
         openshift.io/display-name: Llama Model Runtime
       labels:
         opendatahub.io/dashboard: 'true'
-        environment: production
+        environment: production  # Custom label for environment tracking
     spec:
       annotations:
+        # Enhanced monitoring configuration
         prometheus.io/path: /metrics
         prometheus.io/port: '8080'
-        prometheus.io/scrape: 'true'
+        prometheus.io/scrape: 'true'  # Enable metrics collection
       containers:
         - name: kserve-container
           image: 'quay.io/modh/vllm:rhoai-2.20-cuda'
           args:
             - '--port=8080'
             - '--model=/mnt/models'
-            - '--served-model-name=my-model'
-            - '--tensor-parallel-size=2'
-            - '--max-model-len=8192'
-            - '--max-num-seqs=256'
+            - '--served-model-name={{.Name}}'
+            # Advanced vLLM configuration for large models
+            - '--tensor-parallel-size=2'  # Split model across 2 GPUs
+            - '--max-model-len=8192'      # Extended context window
+            - '--max-num-seqs=256'        # High concurrent request support
           command:
             - python
             - '-m'
@@ -292,15 +332,17 @@ items:
           env:
             - name: HF_HOME
               value: /tmp/hf_home
+            # Performance optimization
             - name: VLLM_ATTENTION_BACKEND
-              value: FLASHINFER
+              value: FLASHINFER  # Optimized attention mechanism
           ports:
             - containerPort: 8080
-              name: http
+              name: http  # Named port for readiness probe
               protocol: TCP
           volumeMounts:
             - mountPath: /dev/shm
               name: shm
+          # Production readiness check
           readinessProbe:
             httpGet:
               path: /health
@@ -314,7 +356,7 @@ items:
         - name: shm
           emptyDir:
             medium: Memory
-            sizeLimit: 12Gi
+            sizeLimit: 12Gi  # Larger shared memory for 70B model
 
   # InferenceService with authentication and autoscaling
   - apiVersion: serving.kserve.io/v1beta1
@@ -323,27 +365,31 @@ items:
       name: llama-model
       annotations:
         openshift.io/display-name: Llama 3.3 70B Model
-        security.opendatahub.io/enable-auth: 'true'
+        # Security and authentication
+        security.opendatahub.io/enable-auth: 'true'  # Enable OpenShift AI auth
         serving.kserve.io/deploymentMode: RawDeployment
         serving.kserve.io/enable-prometheus-scraping: 'true'
       labels:
-        networking.kserve.io/visibility: exposed
+        # Required for route exposure
+        networking.kserve.io/visibility: exposed  # Allow external access
         opendatahub.io/dashboard: 'true'
         environment: production
     spec:
       predictor:
+        # Autoscaling configuration
         minReplicas: 1
-        maxReplicas: 3
-        scaleTarget: 80
-        scaleMetric: cpu
+        maxReplicas: 3     # Scale up to 3 instances
+        scaleTarget: 80    # Target 80% CPU utilization
+        scaleMetric: cpu   # Scale based on CPU usage
         model:
           modelFormat:
             name: vLLM
-          runtime: llama-runtime
+          runtime: llama-model  # Must match InferenceService name
           storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-llama-3-3-70b-instruct:1.5'
           args:
+            # Model-specific optimization
             - '--max-model-len=8192'
-            - '--gpu-memory-utilization=0.95'
+            - '--gpu-memory-utilization=0.95'  # Use 95% of GPU memory
           resources:
             requests:
               cpu: '8'
@@ -394,7 +440,7 @@ kubectl create -f - <<EOF
 apiVersion: serving.kserve.io/v1alpha1
 kind: ServingRuntime
 metadata:
-  name: test-runtime
+  name: test-model  # Must match InferenceService name
 spec:
   containers:
     - name: kserve-container
@@ -420,7 +466,7 @@ spec:
     model:
       modelFormat:
         name: vLLM
-      runtime: test-runtime
+      runtime: test-model  # Must match InferenceService name
       storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.5'
 EOF
 ```
@@ -683,78 +729,68 @@ kubectl get inferenceservice granite-model -o jsonpath='{.metadata.finalizers}'
 
 ## Practical Examples
 
-### Example 1: Deploy a Small Model for Development
+This section shows progressively more advanced model serving configurations, each building on the previous example with additional functionality.
 
-Deploy a lightweight model suitable for development and testing:
+### Example 1: Basic/Minimal Configuration
 
-```bash
-# Create namespace if needed
-kubectl create namespace dev-models
+The simplest possible deployment with just the essentials:
 
-# Deploy Granite 3.1 8B model
-kubectl apply -n dev-models -f - <<EOF
+```yaml
+# minimal-deployment.yaml
 apiVersion: v1
 kind: List
 items:
+  # Minimal ServingRuntime - bare minimum fields
   - apiVersion: serving.kserve.io/v1alpha1
     kind: ServingRuntime
     metadata:
-      name: dev-granite
-      labels:
-        opendatahub.io/dashboard: 'true'
+      name: minimal-model  # Must match InferenceService name
     spec:
       containers:
         - name: kserve-container
           image: 'quay.io/modh/vllm:rhoai-2.20-cuda'
-          args: ['--port=8080', '--model=/mnt/models', '--max-model-len=2048']
-          resources:
-            limits:
-              memory: 16Gi
+          args:
+            - '--port=8080'       # Required: serving port
+            - '--model=/mnt/models'  # Required: model mount path
       supportedModelFormats:
         - name: vLLM
-          autoSelect: true
+          autoSelect: true  # Automatically select this runtime for vLLM models
+  
+  # Minimal InferenceService - only required fields
   - apiVersion: serving.kserve.io/v1beta1
     kind: InferenceService
     metadata:
-      name: dev-granite
-      labels:
-        opendatahub.io/dashboard: 'true'
+      name: minimal-model
     spec:
       predictor:
         model:
           modelFormat:
-            name: vLLM
-          runtime: dev-granite
-          storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.5'
-          resources:
-            requests:
-              cpu: '1'
-              memory: 8Gi
-EOF
-
-# Verify deployment
-kubectl get inferenceservice dev-granite -n dev-models -w
+            name: vLLM  # Must match supportedModelFormats in runtime
+          runtime: minimal-model  # Must match ServingRuntime name
+          storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.5'  # Model location
 ```
 
-### Example 2: Production Deployment with Authentication
-
-Deploy a model with authentication enabled and external access:
-
+Deploy and test:
 ```bash
-# Deploy production model with auth
-kubectl apply -n production -f - <<EOF
+kubectl apply -f minimal-deployment.yaml
+kubectl get inferenceservice minimal-model -w
+```
+
+### Example 2: Adding Custom vLLM Arguments
+
+Build on the basic configuration by adding vLLM-specific arguments to optimize performance:
+
+```yaml
+# custom-args-deployment.yaml
 apiVersion: v1
 kind: List
 items:
   - apiVersion: serving.kserve.io/v1alpha1
     kind: ServingRuntime
     metadata:
-      name: prod-llama
-      annotations:
-        opendatahub.io/accelerator-name: nvidia-a100
+      name: custom-args-model  # Must match InferenceService name
       labels:
-        opendatahub.io/dashboard: 'true'
-        environment: production
+        opendatahub.io/dashboard: 'true'  # Show in dashboard
     spec:
       containers:
         - name: kserve-container
@@ -762,141 +798,314 @@ items:
           args:
             - '--port=8080'
             - '--model=/mnt/models'
-            - '--tensor-parallel-size=2'
+            - '--served-model-name={{.Name}}'  # Uses InferenceService name
+            # vLLM performance tuning arguments
+            - '--max-model-len=4096'         # Limit context window (saves memory)
+            - '--max-num-seqs=128'           # Max concurrent requests
+            - '--gpu-memory-utilization=0.9' # Use 90% of GPU memory
+          resources:  # Resource configuration for GPU
+            requests:
+              memory: 16Gi
+            limits:
+              memory: 24Gi
+              nvidia.com/gpu: '1'  # GPU allocation
+      supportedModelFormats:
+        - name: vLLM
+          autoSelect: true
+  
+  - apiVersion: serving.kserve.io/v1beta1
+    kind: InferenceService
+    metadata:
+      name: custom-args-model
+      labels:
+        opendatahub.io/dashboard: 'true'
+    spec:
+      predictor:
+        model:
+          modelFormat:
+            name: vLLM
+          runtime: custom-args-model  # Must match InferenceService name
+          storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.5'
+          resources:  # Match or exceed runtime resources
+            requests:
+              cpu: '2'
+              memory: 16Gi
+              nvidia.com/gpu: '1'
+            limits:
+              cpu: '4'
+              memory: 24Gi
+              nvidia.com/gpu: '1'
+```
+
+### Example 3: Adding Authentication
+
+Add OpenShift AI authentication to secure your model endpoint:
+
+```yaml
+# auth-deployment.yaml
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: serving.kserve.io/v1alpha1
+    kind: ServingRuntime
+    metadata:
+      name: auth-model  # Must match InferenceService name
+      labels:
+        opendatahub.io/dashboard: 'true'
+    spec:
+      containers:
+        - name: kserve-container
+          image: 'quay.io/modh/vllm:rhoai-2.20-cuda'
+          args:
+            - '--port=8080'
+            - '--model=/mnt/models'
+            - '--max-model-len=4096'
+          resources:
+            limits:
+              memory: 24Gi
+              nvidia.com/gpu: '1'
+      supportedModelFormats:
+        - name: vLLM
+          autoSelect: true
+  
+  - apiVersion: serving.kserve.io/v1beta1
+    kind: InferenceService
+    metadata:
+      name: auth-model
+      annotations:
+        # Authentication-specific annotations
+        security.opendatahub.io/enable-auth: 'true'  # Enable OpenShift AI auth
+        serving.kserve.io/deploymentMode: RawDeployment  # Required for auth
+      labels:
+        opendatahub.io/dashboard: 'true'
+    spec:
+      predictor:
+        model:
+          modelFormat:
+            name: vLLM
+          runtime: auth-model  # Must match InferenceService name
+          storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.5'
+          resources:
+            requests:
+              cpu: '2'
+              memory: 16Gi
+              nvidia.com/gpu: '1'
+            limits:
+              cpu: '4'
+              memory: 24Gi
+              nvidia.com/gpu: '1'
+        # GPU scheduling configuration
+        tolerations:
+          - effect: NoSchedule
+            key: nvidia.com/gpu
+            operator: Exists
+```
+
+### Example 4: Exposing with a Route
+
+Add external access to your model through an OpenShift Route:
+
+```yaml
+# route-deployment.yaml
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: serving.kserve.io/v1alpha1
+    kind: ServingRuntime
+    metadata:
+      name: route-model  # Must match InferenceService name
+      labels:
+        opendatahub.io/dashboard: 'true'
+    spec:
+      containers:
+        - name: kserve-container
+          image: 'quay.io/modh/vllm:rhoai-2.20-cuda'
+          args:
+            - '--port=8080'
+            - '--model=/mnt/models'
+            - '--max-model-len=4096'
+          resources:
+            limits:
+              memory: 24Gi
+              nvidia.com/gpu: '1'
+      supportedModelFormats:
+        - name: vLLM
+          autoSelect: true
+  
+  - apiVersion: serving.kserve.io/v1beta1
+    kind: InferenceService
+    metadata:
+      name: route-model
+      annotations:
+        security.opendatahub.io/enable-auth: 'true'
+        serving.kserve.io/deploymentMode: RawDeployment
+      labels:
+        # Critical label for route exposure
+        networking.kserve.io/visibility: exposed  # Enables external access
+        opendatahub.io/dashboard: 'true'
+    spec:
+      predictor:
+        model:
+          modelFormat:
+            name: vLLM
+          runtime: route-model  # Must match InferenceService name
+          storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.5'
+          resources:
+            requests:
+              cpu: '2'
+              memory: 16Gi
+              nvidia.com/gpu: '1'
+            limits:
+              cpu: '4'
+              memory: 24Gi
+              nvidia.com/gpu: '1'
+        tolerations:
+          - effect: NoSchedule
+            key: nvidia.com/gpu
+            operator: Exists
+  
+  # Route for external HTTPS access
+  - apiVersion: route.openshift.io/v1
+    kind: Route
+    metadata:
+      name: route-model
+      labels:
+        inferenceservice-name: route-model  # Links to InferenceService
+    spec:
+      to:
+        kind: Service
+        name: route-model-predictor  # Auto-created service name
+        weight: 100
+      port:
+        targetPort: http
+      tls:  # TLS configuration for secure access
+        termination: edge  # TLS terminated at router
+        insecureEdgeTerminationPolicy: Redirect  # Force HTTPS
+      wildcardPolicy: None
+```
+
+### Example 5: Multiple GPUs on a Single Node
+
+Configure a model to use multiple GPUs with tensor parallelism:
+
+```yaml
+# multi-gpu-deployment.yaml
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: serving.kserve.io/v1alpha1
+    kind: ServingRuntime
+    metadata:
+      name: multi-gpu-model  # Must match InferenceService name
+      annotations:
+        opendatahub.io/accelerator-name: nvidia-a100  # Target specific GPU type
+      labels:
+        opendatahub.io/dashboard: 'true'
+    spec:
+      containers:
+        - name: kserve-container
+          image: 'quay.io/modh/vllm:rhoai-2.20-cuda'
+          args:
+            - '--port=8080'
+            - '--model=/mnt/models'
+            # Multi-GPU specific configurations
+            - '--tensor-parallel-size=2'     # Split model across 2 GPUs
+            - '--distributed-executor-backend=mp'  # Required for multi-GPU
+            - '--max-model-len=8192'         # Larger context enabled by more memory
           env:
             - name: VLLM_ATTENTION_BACKEND
-              value: FLASHINFER
+              value: FLASHINFER  # Performance optimization for large models
           volumeMounts:
-            - mountPath: /dev/shm
+            - mountPath: /dev/shm  # Shared memory critical for multi-GPU
               name: shm
+          resources:
+            limits:
+              memory: 96Gi
+              nvidia.com/gpu: '2'  # Must match tensor-parallel-size
       supportedModelFormats:
         - name: vLLM
           autoSelect: true
       volumes:
-        - name: shm
+        - name: shm  # Larger shared memory for multi-GPU communication
           emptyDir:
             medium: Memory
-            sizeLimit: 8Gi
+            sizeLimit: 16Gi
+  
   - apiVersion: serving.kserve.io/v1beta1
     kind: InferenceService
     metadata:
-      name: prod-llama
+      name: multi-gpu-model
       annotations:
         security.opendatahub.io/enable-auth: 'true'
         serving.kserve.io/deploymentMode: RawDeployment
+        serving.kserve.io/enable-prometheus-scraping: 'true'  # Monitor multi-GPU usage
       labels:
         networking.kserve.io/visibility: exposed
         opendatahub.io/dashboard: 'true'
     spec:
       predictor:
-        minReplicas: 2
-        maxReplicas: 5
+        # Autoscaling configuration for production
+        minReplicas: 1
+        maxReplicas: 3       # Scale horizontally across nodes
+        scaleTarget: 80      # CPU utilization target
+        scaleMetric: cpu
         model:
           modelFormat:
             name: vLLM
-          runtime: prod-llama
+          runtime: multi-gpu-model  # Must match InferenceService name
+          # Large model requiring multiple GPUs
           storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-llama-3-3-70b-instruct:1.5'
           resources:
             requests:
               cpu: '8'
               memory: 80Gi
-              nvidia.com/gpu: '2'
+              nvidia.com/gpu: '2'  # Must match runtime GPU count
             limits:
               cpu: '16'
               memory: 96Gi
-              nvidia.com/gpu: '2'
+              nvidia.com/gpu: '2'  # Ensure same GPU count as runtime
         tolerations:
           - effect: NoSchedule
             key: nvidia.com/gpu
             operator: Exists
+          - effect: NoSchedule               # A100-specific toleration
+            key: nvidia.com/gpu-model
+            operator: Equal
+            value: A100
+  
   - apiVersion: route.openshift.io/v1
     kind: Route
     metadata:
-      name: prod-llama
+      name: multi-gpu-model
     spec:
       to:
         kind: Service
-        name: prod-llama-predictor
+        name: multi-gpu-model-predictor
       tls:
         termination: edge
         insecureEdgeTerminationPolicy: Redirect
-EOF
 ```
 
-### Example 3: Model Migration (Blue-Green Deployment)
-
-Migrate from one model to another with zero downtime:
+### Deployment Commands for All Examples
 
 ```bash
-# Step 1: Deploy new model version alongside existing
-kubectl apply -f - <<EOF
-apiVersion: serving.kserve.io/v1beta1
-kind: InferenceService
-metadata:
-  name: model-v2
-  labels:
-    version: v2
-spec:
-  predictor:
-    model:
-      modelFormat:
-        name: vLLM
-      runtime: existing-runtime
-      storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.6'
-EOF
+# Deploy each example progressively
+kubectl apply -f minimal-deployment.yaml
+kubectl apply -f custom-args-deployment.yaml
+kubectl apply -f auth-deployment.yaml
+kubectl apply -f route-deployment.yaml
+kubectl apply -f multi-gpu-deployment.yaml
 
-# Step 2: Test new model
-kubectl port-forward service/model-v2-predictor 8080:80
-# Test with curl in another terminal
+# Monitor deployment status
+kubectl get inferenceservice -w
 
-# Step 3: Update route to point to new model
-kubectl patch route model-endpoint --type='json' -p='[
-  {"op": "replace", "path": "/spec/to/name", "value": "model-v2-predictor"}
-]'
+# Test endpoints (internal)
+kubectl port-forward service/<model-name>-predictor 8080:80
+curl http://localhost:8080/v2/models
 
-# Step 4: Delete old model after verification
-kubectl delete inferenceservice model-v1
-```
-
-### Example 4: Multi-Model Serving Setup
-
-Deploy multiple models sharing the same runtime:
-
-```bash
-# Create shared runtime
-kubectl apply -f - <<EOF
-apiVersion: serving.kserve.io/v1alpha1
-kind: ServingRuntime
-metadata:
-  name: shared-vllm-runtime
-  annotations:
-    opendatahub.io/recommended-accelerators: '["nvidia.com/gpu"]'
-spec:
-  containers:
-    - name: kserve-container
-      image: 'quay.io/modh/vllm:rhoai-2.20-cuda'
-      args: ['--port=8080', '--model=/mnt/models', '--served-model-name=my-model']
-  supportedModelFormats:
-    - name: vLLM
-      autoSelect: true
-EOF
-
-# Deploy multiple models using the shared runtime
-for model in granite-8b llama-8b mistral-7b; do
-  kubectl apply -f - <<EOF
-apiVersion: serving.kserve.io/v1beta1
-kind: InferenceService
-metadata:
-  name: $model
-spec:
-  predictor:
-    model:
-      modelFormat:
-        name: vLLM
-      runtime: shared-vllm-runtime
-      storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-$model:1.5'
-EOF
-done
+# Test external routes
+ROUTE_URL=$(kubectl get route <model-name> -o jsonpath='{.spec.host}')
+curl https://$ROUTE_URL/v2/models
 ```
 
 ## Verification and Troubleshooting

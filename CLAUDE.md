@@ -187,10 +187,12 @@ This repository follows the llmstxt.org standard for providing LLM-friendly docu
 
 ### Updating LLM Files
 When documentation changes:
-1. Run the generation script: `./generate-llms-txt.sh`
+1. **ALWAYS** run the generation script after modifying any markdown files in the docs folder: `./generate-llms-txt.sh`
 2. Review the updated llms.txt to ensure descriptions are accurate
 3. Manually edit llms.txt header if the project overview changes
 4. Ensure both files remain in the root directory
+
+**Important**: You must run `./generate-llms-txt.sh` after any documentation changes to keep the LLM files in sync.
 
 The `generate-llms-txt.sh` script automatically:
 - Finds all markdown files with nav_order in frontmatter
@@ -208,3 +210,10 @@ When creating commits in this repository:
 - **DO NOT** add Co-Authored-By references to Claude
 - Focus commit messages on the technical changes made
 - Use conventional commit format when appropriate (feat:, fix:, docs:, etc.)
+
+## Git Push Guidelines
+
+- **NEVER** push changes to remote without explicit user permission
+- **ALWAYS** wait for the user to review changes before pushing
+- When commits are ready, inform the user and wait for their approval to push
+- The user will explicitly ask to "push" when they're ready
