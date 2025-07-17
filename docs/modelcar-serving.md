@@ -127,7 +127,7 @@ items:
           args:
             - '--port=8080'
             - '--model=/mnt/models'
-            - '--served-model-name={{.Name}}'
+            - '--served-model-name=my-model'
           command:
             - python
             - '-m'
@@ -187,7 +187,7 @@ items:
           args:
             - '--port=8080'
             - '--model=/mnt/models'
-            - '--served-model-name={{.Name}}'
+            - '--served-model-name=my-model'
             - '--tensor-parallel-size=1'
           command:
             - python
@@ -280,7 +280,7 @@ items:
           args:
             - '--port=8080'
             - '--model=/mnt/models'
-            - '--served-model-name={{.Name}}'
+            - '--served-model-name=my-model'
             - '--tensor-parallel-size=2'
             - '--max-model-len=8192'
             - '--max-num-seqs=256'
@@ -874,7 +874,7 @@ spec:
   containers:
     - name: kserve-container
       image: 'quay.io/modh/vllm:rhoai-2.20-cuda'
-      args: ['--port=8080', '--model=/mnt/models', '--served-model-name={{.Name}}']
+      args: ['--port=8080', '--model=/mnt/models', '--served-model-name=my-model']
   supportedModelFormats:
     - name: vLLM
       autoSelect: true

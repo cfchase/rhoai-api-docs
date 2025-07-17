@@ -40,6 +40,10 @@ if [ ! -f "Gemfile.lock" ]; then
     bundle install
 fi
 
+# Clean previous build
+echo "Cleaning previous build..."
+bundle exec jekyll clean
+
 # Start Jekyll server
 echo "Starting Jekyll server..."
 bundle exec jekyll serve --livereload 

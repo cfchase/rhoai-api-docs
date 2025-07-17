@@ -45,3 +45,12 @@ nav_external_links:
 # Nav menu can also be selectively enabled or disabled using page variables or the minimal layout
 nav_enabled: true
 
+# Sass configuration
+sass:
+  style: compressed
+  quiet_deps: true
+  silence_deprecations: ['import']
+  load_paths:
+    - _sass
+    - node_modules
+

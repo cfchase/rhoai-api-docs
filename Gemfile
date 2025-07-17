@@ -1,7 +1,10 @@
 source "https://rubygems.org"
 
 gem "jekyll", "~> 4.3.0"
-gem "just-the-docs", "~> 0.7.0"
+gem "just-the-docs", "~> 0.10.1"
+gem "jekyll-sass-converter", "~> 3.1.0"
+gem "csv"
+gem "base64"
 
 group :jekyll_plugins do
   gem "jekyll-feed", "~> 0.12"
