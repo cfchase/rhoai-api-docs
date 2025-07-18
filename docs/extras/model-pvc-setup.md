@@ -80,7 +80,13 @@ model-pvc   Bound    pvc-12345678-abcd-efgh-ijkl-123456789012   100Gi      RWX  
 
 ### Method 1: Using a Job to Download Models
 
-Create a Kubernetes Job to download models directly to the PVC:
+Create a Kubernetes Job to download models directly to the PVC.
+
+**Recommended Model Sources:**
+- [Red Hat AI Validated Models](https://huggingface.co/collections/RedHatAI/red-hat-ai-validated-models-v10-682613dc19c4a596dbac9437) - Pre-validated and optimized models for enterprise use
+- These models are tested and supported for use with OpenShift AI
+
+Example using a Red Hat validated model:
 
 ```yaml
 # download-model-job.yaml
@@ -105,17 +111,18 @@ spec:
             python -c "
             from huggingface_hub import snapshot_download
             
-            # Download Llama-2-7B model
+            # Download Red Hat validated Llama model
             snapshot_download(
-                repo_id='meta-llama/Llama-2-7b-chat-hf',
-                local_dir='/models/llama-2-7b-chat',
-                local_dir_use_symlinks=False,
-                token='YOUR_HF_TOKEN'  # Replace with your Hugging Face token
+                repo_id='RedHatAI/Llama-3.1-8B-Instruct',
+                local_dir='/models/llama-3.1-8b-instruct',
+                local_dir_use_symlinks=False
+                # Note: Some models may require authentication
+                # token='YOUR_HF_TOKEN'  # Uncomment and add token if needed
             )
             "
             
             echo "Model download complete!"
-            ls -la /models/llama-2-7b-chat/
+            ls -la /models/llama-3.1-8b-instruct/
         volumeMounts:
         - name: model-storage
           mountPath: /models
@@ -184,7 +191,13 @@ kubectl exec -it model-setup -n my-namespace -- bash
 
 # Inside the pod, download models
 pip install huggingface-hub
-python -c "from huggingface_hub import snapshot_download; snapshot_download('meta-llama/Llama-2-7b-chat-hf', local_dir='/models/llama-2-7b-chat', local_dir_use_symlinks=False)"
+# Download a Red Hat validated model
+python -c "from huggingface_hub import snapshot_download; snapshot_download('RedHatAI/Llama-3.1-8B-Instruct', local_dir='/models/llama-3.1-8b-instruct', local_dir_use_symlinks=False)"
+
+# Or download other Red Hat AI models:
+# RedHatAI/granite-3-8b-instruct
+# RedHatAI/Mistral-7B-Instruct-v0.3
+# See full collection: https://huggingface.co/collections/RedHatAI
 
 # Exit and delete the pod when done
 exit
@@ -239,7 +252,7 @@ spec:
         name: vLLM
       runtime: llama-runtime
       # Reference the PVC and model path
-      storageUri: 'pvc://model-pvc/llama-2-7b-chat'
+      storageUri: 'pvc://model-pvc/llama-3.1-8b-instruct'
       resources:
         requests:
           nvidia.com/gpu: '1'
@@ -273,7 +286,7 @@ spec:
 Structure your models on the PVC:
 ```
 /models/
-├── llama-2-7b-chat/
+├── llama-3.1-8b-instruct/
 │   ├── config.json
 │   ├── model.safetensors
 │   └── tokenizer.json

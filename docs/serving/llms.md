@@ -177,7 +177,7 @@ Models stored on Kubernetes persistent volumes.
 spec:
   predictor:
     model:
-      storageUri: 'pvc://model-pvc/llama-2-7b-chat'  # pvc://<pvc-name>/<model-path>
+      storageUri: 'pvc://model-pvc/llama-3.1-8b-instruct'  # pvc://<pvc-name>/<model-path>
 ```
 
 **Prerequisites:**
@@ -1143,7 +1143,7 @@ items:
           # Use storage field for S3 connections
           storage:
             key: model-s3-storage  # Reference to the Secret
-            path: models/llama-2-7b-chat/  # Path within the S3 bucket
+            path: models/llama-3.1-8b-instruct/  # Path within the S3 bucket
           args:
             - '--max-model-len=4096'
           resources:
@@ -1205,7 +1205,7 @@ items:
             name: vLLM
           runtime: pvc-model
           # Use storageUri with pvc:// scheme
-          storageUri: 'pvc://model-pvc/llama-2-7b-chat'  # pvc://<pvc-name>/<model-path>
+          storageUri: 'pvc://model-pvc/llama-3.1-8b-instruct'  # pvc://<pvc-name>/<model-path>
           args:
             - '--max-model-len=4096'
           resources:
@@ -1221,7 +1221,7 @@ items:
 
 **Prerequisites for PVC storage:**
 1. Create a PVC named `model-pvc` with RWX access mode
-2. Copy model files to the PVC at path `llama-2-7b-chat/`
+2. Copy model files to the PVC at path `llama-3.1-8b-instruct/`
 3. See [Setting Up PVCs for Model Storage](/docs/extras/model-pvc-setup/) for detailed instructions
 
 ### Deployment Commands for All Examples
