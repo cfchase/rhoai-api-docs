@@ -461,7 +461,7 @@ spec:
 
 **See examples:**
 - [Example 1: Basic/Minimal Configuration](#example-1-basicminimal-configuration)
-- [Example 2-5](#example-2-adding-custom-vllm-arguments) - All use ModelCar storage
+- [Example 2-6](#example-2-adding-custom-vllm-arguments) - All use ModelCar storage
 
 ### 2. S3-Compatible Storage
 
@@ -487,7 +487,7 @@ spec:
 - Ensure the model files are uploaded to the specified S3 path
 
 **See example:**
-- [Example 6: S3 Storage Deployment](#example-6-s3-storage-deployment)
+- [Example 7: S3 Storage Deployment](#example-7-s3-storage-deployment)
 
 ### 3. Persistent Volume Claims (PVC)
 
@@ -511,7 +511,7 @@ spec:
 - Model files must be copied to the PVC (see [Setting Up PVCs for Model Storage](/docs/extras/model-pvc-setup/))
 
 **See example:**
-- [Example 7: PVC Storage Deployment](#example-7-pvc-storage-deployment)
+- [Example 8: PVC Storage Deployment](#example-8-pvc-storage-deployment)
 
 ### Choosing a Storage Method
 
@@ -613,7 +613,7 @@ tolerations:
 
 **See examples:**
 - [Example 1: Basic/Minimal Configuration](#example-1-basicminimal-configuration) - Single GPU setup
-- [Example 5: Multiple GPUs on a Single Node](#example-5-multiple-gpus-on-a-single-node) - Multi-GPU with tensor parallelism
+- [Example 6: Multiple GPUs on a Single Node](#example-6-multiple-gpus-on-a-single-node) - Multi-GPU with tensor parallelism
 
 #### Memory and Performance Optimization
 
@@ -634,7 +634,7 @@ volumeMounts:
 ```
 
 **See examples:**
-- [Example 5: Multiple GPUs on a Single Node](#example-5-multiple-gpus-on-a-single-node) - 12Gi shared memory for large models
+- [Example 6: Multiple GPUs on a Single Node](#example-6-multiple-gpus-on-a-single-node) - 12Gi shared memory for large models
 
 #### Model-Specific Arguments
 
@@ -653,7 +653,7 @@ args:
 
 **See examples:**
 - [Example 2: Adding Custom vLLM Arguments](#example-2-adding-custom-vllm-arguments) - Comprehensive vLLM configuration
-- [Example 5: Multiple GPUs on a Single Node](#example-5-multiple-gpus-on-a-single-node) - Multi-GPU specific arguments
+- [Example 6: Multiple GPUs on a Single Node](#example-6-multiple-gpus-on-a-single-node) - Multi-GPU specific arguments
 
 #### Monitoring and Observability
 
@@ -683,6 +683,7 @@ annotations:
 **See examples:**
 - [Example 3: Adding Authentication](#example-3-adding-authentication) - Dashboard integration with auth
 - [Example 4: Exposing with a Route](#example-4-exposing-with-a-route) - External visibility settings
+- [Example 5: Combining Authentication with External Route](#example-5-combining-authentication-with-external-route) - Both auth and external access
 
 ### Method 1: Declarative (Using YAML)
 
@@ -1247,7 +1248,7 @@ kubectl apply -f auth-model-service.yaml
 
 ### Example 4: Exposing with a Route
 
-Add external access to your model through an OpenShift Route:
+Add external access to your model through an OpenShift Route (without authentication):
 
 **ServingRuntime** (`route-model-runtime.yaml`):
 ```yaml
@@ -1282,9 +1283,6 @@ apiVersion: serving.kserve.io/v1beta1
 kind: InferenceService
 metadata:
   name: route-model
-  annotations:
-    security.opendatahub.io/enable-auth: 'true'
-    serving.kserve.io/deploymentMode: RawDeployment
   labels:
     # Critical label for route exposure
     networking.kserve.io/visibility: exposed  # Enables external access
@@ -1342,7 +1340,112 @@ kubectl wait --for=condition=Ready inferenceservice/route-model --timeout=300s
 kubectl apply -f route-model-route.yaml
 ```
 
-### Example 5: Multiple GPUs on a Single Node
+### Example 5: Combining Authentication with External Route
+
+For production deployments, you'll often want both authentication and external access:
+
+**ServingRuntime** (`secure-route-runtime.yaml`):
+```yaml
+# secure-route-runtime.yaml
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+metadata:
+  name: secure-route-model  # Must match InferenceService name
+  labels:
+    opendatahub.io/dashboard: 'true'
+spec:
+  containers:
+    - name: kserve-container
+      image: 'quay.io/modh/vllm:rhoai-2.20-cuda'
+      args:
+        - '--port=8080'
+        - '--model=/mnt/models'
+        - '--max-model-len=4096'
+        - '--served-model-name={{.Name}}'
+      resources:
+        requests:
+          memory: 16Gi
+        limits:
+          memory: 24Gi
+          nvidia.com/gpu: '1'
+  supportedModelFormats:
+    - name: vLLM
+      autoSelect: true
+```
+
+**InferenceService** (`secure-route-service.yaml`):
+```yaml
+# secure-route-service.yaml
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: secure-route-model
+  annotations:
+    # Enable authentication
+    security.opendatahub.io/enable-auth: 'true'  # Enable OpenShift AI auth
+    serving.kserve.io/deploymentMode: RawDeployment  # Required for auth
+  labels:
+    # Enable external access
+    networking.kserve.io/visibility: exposed  # Enables route creation
+    opendatahub.io/dashboard: 'true'
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: vLLM
+      runtime: secure-route-model
+      storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.5'
+      resources:
+        requests:
+          cpu: '2'
+          memory: 16Gi
+          nvidia.com/gpu: '1'
+        limits:
+          cpu: '4'
+          memory: 24Gi
+          nvidia.com/gpu: '1'
+    tolerations:
+      - effect: NoSchedule
+        key: nvidia.com/gpu
+        operator: Exists
+```
+
+**Route** (`secure-route-route.yaml`):
+```yaml
+# secure-route-route.yaml - external HTTPS access with auth
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: secure-route-model
+  labels:
+    inferenceservice-name: secure-route-model  # Links to InferenceService
+spec:
+  to:
+    kind: Service
+    name: secure-route-model-predictor  # Auto-created service name
+    weight: 100
+  port:
+    targetPort: http
+  tls:  # TLS configuration for secure access
+    termination: edge  # TLS terminated at router
+    insecureEdgeTerminationPolicy: Redirect  # Force HTTPS
+  wildcardPolicy: None
+```
+
+Deploy with authentication and external access:
+```bash
+kubectl apply -f secure-route-runtime.yaml
+kubectl apply -f secure-route-service.yaml
+# Wait for service to be created
+kubectl wait --for=condition=Ready inferenceservice/secure-route-model --timeout=300s
+kubectl apply -f secure-route-route.yaml
+
+# Get the external URL
+ROUTE_URL=$(kubectl get route secure-route-model -o jsonpath='{.spec.host}')
+echo "Model endpoint (requires auth): https://$ROUTE_URL/v2/models"
+```
+
+### Example 6: Multiple GPUs on a Single Node
 
 Configure a model to use multiple GPUs with tensor parallelism:
 
@@ -1459,7 +1562,7 @@ kubectl wait --for=condition=Ready inferenceservice/multi-gpu-model --timeout=30
 kubectl apply -f multi-gpu-model-route.yaml
 ```
 
-### Example 6: S3 Storage Deployment
+### Example 7: S3 Storage Deployment
 
 Deploy a model from S3-compatible storage with included data connection:
 
@@ -1552,7 +1655,7 @@ kubectl apply -f s3-model-runtime.yaml
 kubectl apply -f s3-model-service.yaml
 ```
 
-### Example 7: PVC Storage Deployment
+### Example 8: PVC Storage Deployment
 
 Deploy a model from a Persistent Volume Claim:
 
@@ -1645,18 +1748,24 @@ kubectl apply -f route-model-service.yaml
 kubectl wait --for=condition=Ready inferenceservice/route-model --timeout=300s
 kubectl apply -f route-model-route.yaml
 
-# Example 5: Multi-GPU
+# Example 5: Authentication + Route
+kubectl apply -f secure-route-runtime.yaml
+kubectl apply -f secure-route-service.yaml
+kubectl wait --for=condition=Ready inferenceservice/secure-route-model --timeout=300s
+kubectl apply -f secure-route-route.yaml
+
+# Example 6: Multi-GPU
 kubectl apply -f multi-gpu-model-runtime.yaml
 kubectl apply -f multi-gpu-model-service.yaml
 kubectl wait --for=condition=Ready inferenceservice/multi-gpu-model --timeout=300s
 kubectl apply -f multi-gpu-model-route.yaml
 
-# Example 6: S3 Storage
+# Example 7: S3 Storage
 kubectl apply -f s3-model-secret.yaml
 kubectl apply -f s3-model-runtime.yaml
 kubectl apply -f s3-model-service.yaml
 
-# Example 7: PVC Storage
+# Example 8: PVC Storage
 kubectl apply -f pvc-model-runtime.yaml
 kubectl apply -f pvc-model-service.yaml
 
