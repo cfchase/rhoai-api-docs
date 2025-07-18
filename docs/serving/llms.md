@@ -199,6 +199,8 @@ spec:
 
 Model deployments require creating both a ServingRuntime and InferenceService. Optionally, you can also create a Route for external access. The resources should be created in order: ServingRuntime → InferenceService → Route.
 
+**Important for External Access**: To expose your model externally with a Route, you MUST add the label `networking.kserve.io/visibility: exposed` to your InferenceService. Without this label, the service will only be accessible internally within the cluster.
+
 ### Basic Deployment Structure
 
 Here's the minimal structure needed for deploying an LLM. Create two separate files:
@@ -1618,7 +1620,7 @@ kubectl exec -it <pod-name> -- curl -w "@curl-format.txt" -o /dev/null -s http:/
 | `metadata.name` | string | Yes | Unique model identifier | `granite-model` |
 | `metadata.annotations.security.opendatahub.io/enable-auth` | string | No | Enable authentication | `'true'` or `'false'` |
 | `metadata.annotations.serving.kserve.io/deploymentMode` | string | No | Deployment mode | `RawDeployment` |
-| `metadata.labels.networking.kserve.io/visibility` | string | No | Network visibility | `exposed` |
+| `metadata.labels.networking.kserve.io/visibility` | string | No | Network visibility (REQUIRED for external Route access) | `exposed` |
 | `spec.predictor.minReplicas` | integer | No | Minimum pod replicas | `1` |
 | `spec.predictor.maxReplicas` | integer | No | Maximum pod replicas | `5` |
 | `spec.predictor.scaleTarget` | integer | No | Autoscaling target percentage | `80` |
