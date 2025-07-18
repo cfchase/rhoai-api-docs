@@ -1,6 +1,327 @@
-# Serving Models with ModelCars
+# Setting Up PVCs for Model Storage
 
-ModelCar serving in Red Hat OpenShift AI provides a comprehensive solution for deploying and serving machine learning models at scale. Using the KServe infrastructure, ModelCars enable production-ready model deployments with features like GPU acceleration, autoscaling, and secure external access.
+This guide explains how to create and configure Persistent Volume Claims (PVCs) for storing large language models that can be served by OpenShift AI. Using PVCs allows you to store models on shared storage and serve them across multiple deployments.
+
+## Overview
+
+PVC-based model storage is useful when you:
+- Have models stored on shared file systems
+- Need to modify or customize model files
+- Want to avoid downloading models from external sources repeatedly
+- Require ReadWriteMany (RWX) access for multiple pods
+
+## Prerequisites
+
+- Access to a Kubernetes/OpenShift cluster
+- Storage class that supports RWX access mode (e.g., NFS, CephFS, GlusterFS)
+- Sufficient storage quota for your models (LLMs can be 10-100+ GB)
+- `kubectl` or `oc` CLI tool configured
+
+## Creating a PVC for Model Storage
+
+### Step 1: Determine Storage Requirements
+
+First, check available storage classes that support RWX:
+
+```bash
+# List storage classes
+kubectl get storageclass
+
+# Check which support RWX (look for "ReadWriteMany" in the output)
+kubectl describe storageclass <storage-class-name>
+```
+
+### Step 2: Create the PVC
+
+Create a PVC with sufficient capacity for your models:
+
+```yaml
+# model-storage-pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-pvc
+  namespace: my-namespace
+  labels:
+    app: model-storage
+    purpose: llm-serving
+spec:
+  accessModes:
+    - ReadWriteMany  # Required for multiple pod access
+  resources:
+    requests:
+      storage: 100Gi  # Adjust based on model size
+  storageClassName: nfs-storage  # Replace with your RWX storage class
+```
+
+Apply the PVC:
+```bash
+kubectl apply -f model-storage-pvc.yaml -n my-namespace
+```
+
+Verify PVC is bound:
+```bash
+kubectl get pvc model-pvc -n my-namespace
+
+# Expected output:
+NAME        STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+model-pvc   Bound    pvc-12345678-abcd-efgh-ijkl-123456789012   100Gi      RWX            nfs-storage    1m
+```
+
+## Downloading Models to PVC
+
+### Method 1: Using a Job to Download Models
+
+Create a Kubernetes Job to download models directly to the PVC:
+
+```yaml
+# download-model-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: download-llama-model
+  namespace: my-namespace
+spec:
+  template:
+    spec:
+      containers:
+      - name: downloader
+        image: python:3.11-slim
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            # Install required tools
+            pip install huggingface-hub
+            
+            # Download model to PVC
+            python -c "
+            from huggingface_hub import snapshot_download
+            
+            # Download Llama-2-7B model
+            snapshot_download(
+                repo_id='meta-llama/Llama-2-7b-chat-hf',
+                local_dir='/models/llama-2-7b-chat',
+                local_dir_use_symlinks=False,
+                token='YOUR_HF_TOKEN'  # Replace with your Hugging Face token
+            )
+            "
+            
+            echo "Model download complete!"
+            ls -la /models/llama-2-7b-chat/
+        volumeMounts:
+        - name: model-storage
+          mountPath: /models
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2"
+          limits:
+            memory: "8Gi"
+            cpu: "4"
+      volumes:
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: model-pvc
+      restartPolicy: Never
+  backoffLimit: 2
+```
+
+Run the job:
+```bash
+kubectl apply -f download-model-job.yaml -n my-namespace
+
+# Monitor progress
+kubectl logs -f job/download-llama-model -n my-namespace
+```
+
+### Method 2: Using a Temporary Pod
+
+Create a temporary pod to manually download or copy models:
+
+```yaml
+# model-setup-pod.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: model-setup
+  namespace: my-namespace
+spec:
+  containers:
+  - name: setup
+    image: python:3.11
+    command: ["sleep", "infinity"]
+    volumeMounts:
+    - name: model-storage
+      mountPath: /models
+    resources:
+      requests:
+        memory: "4Gi"
+        cpu: "2"
+  volumes:
+  - name: model-storage
+    persistentVolumeClaim:
+      claimName: model-pvc
+```
+
+Deploy and access the pod:
+```bash
+# Create the pod
+kubectl apply -f model-setup-pod.yaml -n my-namespace
+
+# Wait for pod to be ready
+kubectl wait --for=condition=ready pod/model-setup -n my-namespace
+
+# Access the pod
+kubectl exec -it model-setup -n my-namespace -- bash
+
+# Inside the pod, download models
+pip install huggingface-hub
+python -c "from huggingface_hub import snapshot_download; snapshot_download('meta-llama/Llama-2-7b-chat-hf', local_dir='/models/llama-2-7b-chat', local_dir_use_symlinks=False)"
+
+# Exit and delete the pod when done
+exit
+kubectl delete pod model-setup -n my-namespace
+```
+
+### Method 3: Copying from Local Machine
+
+If you have models locally, copy them to the PVC:
+
+```bash
+# Create a temporary pod with the PVC mounted
+kubectl run model-copy --image=busybox --restart=Never --rm -i --tty \
+  --overrides='{"spec":{"volumes":[{"name":"model-storage","persistentVolumeClaim":{"claimName":"model-pvc"}}],"containers":[{"name":"model-copy","volumeMounts":[{"name":"model-storage","mountPath":"/models"}]}]}}' \
+  -n my-namespace -- sh
+
+# In another terminal, copy files to the pod
+kubectl cp /local/path/to/model my-namespace/model-copy:/models/my-model
+
+# The pod will automatically be deleted when you exit
+```
+
+## Verifying Model Files
+
+Check that models are correctly stored on the PVC:
+
+```bash
+# Create a debug pod to inspect the PVC
+kubectl run pvc-inspector --image=busybox --restart=Never --rm -i --tty \
+  --overrides='{"spec":{"volumes":[{"name":"model-storage","persistentVolumeClaim":{"claimName":"model-pvc"}}],"containers":[{"name":"pvc-inspector","volumeMounts":[{"name":"model-storage","mountPath":"/models"}]}]}}' \
+  -n my-namespace -- sh
+
+# Inside the pod
+ls -la /models/
+du -sh /models/*
+```
+
+## Using PVC Storage in InferenceService
+
+Once models are stored on the PVC, reference them in your InferenceService:
+
+```yaml
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: llama-model
+  namespace: my-namespace
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: vLLM
+      runtime: llama-runtime
+      # Reference the PVC and model path
+      storageUri: 'pvc://model-pvc/llama-2-7b-chat'
+      resources:
+        requests:
+          nvidia.com/gpu: '1'
+        limits:
+          nvidia.com/gpu: '1'
+```
+
+## Best Practices
+
+### Storage Sizing
+
+- **Small models (< 10GB)**: 50Gi PVC
+- **Medium models (10-50GB)**: 100Gi PVC
+- **Large models (> 50GB)**: 200Gi+ PVC
+- Add 20% overhead for temporary files and caching
+
+### Access Modes
+
+- Use **ReadWriteMany (RWX)** for:
+  - Serving models from multiple pods
+  - Updating models without downtime
+  - Shared model repositories
+
+- Use **ReadWriteOnce (RWO)** only if:
+  - Single pod deployment
+  - Cost is a major concern
+  - RWX is not available
+
+### Organization
+
+Structure your models on the PVC:
+```
+/models/
+├── llama-2-7b-chat/
+│   ├── config.json
+│   ├── model.safetensors
+│   └── tokenizer.json
+├── granite-3-1-8b/
+│   └── ...
+└── mistral-7b/
+    └── ...
+```
+
+### Performance Considerations
+
+1. **Storage Class**: Choose high-performance storage for production
+2. **Caching**: Models are loaded into memory, so initial load time is most important
+3. **Network**: Ensure good network connectivity between nodes and storage
+
+## Troubleshooting
+
+### PVC Won't Bind
+
+```bash
+# Check PVC events
+kubectl describe pvc model-pvc -n my-namespace
+
+# Common issues:
+# - No storage class supports RWX
+# - Insufficient quota
+# - Storage class doesn't exist
+```
+
+### Model Loading Errors
+
+```bash
+# Check InferenceService logs
+kubectl logs -l serving.kserve.io/inferenceservice=your-model -n my-namespace
+
+# Common issues:
+# - Wrong path in storageUri
+# - Missing model files
+# - Incorrect permissions
+```
+
+### Slow Model Loading
+
+- Check storage performance: `kubectl exec -it <pod> -- dd if=/models/test of=/dev/null bs=1M count=1000`
+- Consider using higher performance storage class
+- Ensure nodes have good network connectivity to storage
+
+## Related Resources
+
+- [Serving Large Language Models](/docs/serving/llms/)
+- [Data Connections](/docs/data-connections/)
+- [Kubernetes Persistent Volumes Documentation](https://kubernetes.io/docs/concepts/storage/persistent-volumes/)
+
+# Serving Large Language Models (LLMs)
+
+Red Hat OpenShift AI provides a comprehensive solution for deploying and serving Large Language Models (LLMs) at scale. Using the KServe infrastructure, you can deploy models from various storage sources including pre-built ModelCars (OCI registries), S3-compatible storage, and Persistent Volume Claims (PVCs).
 
 ## Overview
 
@@ -13,7 +334,7 @@ A complete model serving deployment in OpenShift AI consists of three key resour
 
 2. **InferenceService**: Defines WHAT model to serve
    - References the ServingRuntime to use
-   - Specifies the model location (storageUri)
+   - Specifies the model location (storageUri or storage)
    - Controls deployment parameters (replicas, resources, tolerations)
    - Manages the model lifecycle
 
@@ -104,6 +425,79 @@ From the AcceleratorProfile, note:
 
 If no AcceleratorProfiles exist, you can still deploy models by manually specifying GPU resources and tolerations based on your cluster configuration.
 
+## Storage Options for LLMs
+
+OpenShift AI supports three primary storage methods for serving LLMs. Each method has specific use cases and configuration requirements:
+
+### 1. ModelCars (OCI Registry)
+
+Pre-built, optimized container images from Red Hat's registry or other OCI-compliant registries.
+
+**When to use:**
+- Quick deployment of Red Hat validated models
+- Models that are pre-optimized and containerized
+- When you don't need to modify model files
+
+**Configuration:**
+```yaml
+spec:
+  predictor:
+    model:
+      storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.5'
+```
+
+### 2. S3-Compatible Storage
+
+Models stored in S3-compatible object storage (AWS S3, MinIO, OpenShift Data Foundation).
+
+**When to use:**
+- Models stored in object storage
+- When you need to share models across multiple deployments
+- Integration with existing S3 infrastructure
+
+**Configuration:**
+```yaml
+spec:
+  predictor:
+    model:
+      storage:
+        key: aws-connection-my-storage  # Name of your S3 data connection
+        path: models/granite-7b-instruct/  # Path within the S3 bucket
+```
+
+**Prerequisites:**
+- Create an S3 data connection in your namespace (see [Data Connections](/docs/data-connections/))
+- Ensure the model files are uploaded to the specified S3 path
+
+### 3. Persistent Volume Claims (PVC)
+
+Models stored on Kubernetes persistent volumes.
+
+**When to use:**
+- Models already available on shared storage
+- When you need ReadWriteMany (RWX) access
+- Custom model files or modified versions
+
+**Configuration:**
+```yaml
+spec:
+  predictor:
+    model:
+      storageUri: 'pvc://model-pvc/llama-2-7b-chat'  # pvc://<pvc-name>/<model-path>
+```
+
+**Prerequisites:**
+- PVC must exist in the same namespace
+- Model files must be copied to the PVC (see [Setting Up PVCs for Model Storage](/docs/extras/model-pvc-setup/))
+
+### Choosing a Storage Method
+
+| Storage Type | Best For | Pros | Cons |
+|-------------|----------|------|------|
+| **ModelCars (OCI)** | Production deployments | Pre-optimized, versioned, easy to deploy | Limited to available images |
+| **S3 Storage** | Shared models, cloud environments | Centralized storage, easy updates | Requires S3 setup, potential latency |
+| **PVC Storage** | Custom models, on-premise | Full control, no external dependencies | Requires PVC management, manual uploads |
+
 ## Creating Model Deployments
 
 Model deployments require creating both a ServingRuntime and InferenceService. Optionally, you can also create a Route for external access. The resources should be created in order: ServingRuntime → InferenceService → Route.
@@ -118,7 +512,7 @@ The declarative approach uses YAML files to define your model serving stack. Thi
 
 #### Basic Model Deployment
 
-A standard deployment with GPU acceleration:
+The following examples show how to deploy the same model using different storage options. Choose the one that matches your storage method:
 
 ```yaml
 # serving-basic.yaml
@@ -190,7 +584,14 @@ items:
           modelFormat:
             name: vLLM
           runtime: granite-model  # Must match InferenceService name
+          # Option 1: ModelCar (OCI Registry)
           storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.5'
+          # Option 2: S3 Storage (comment out storageUri above and use this instead)
+          # storage:
+          #   key: aws-connection-my-storage  # Your S3 data connection name
+          #   path: models/granite-3-1-8b-instruct/  # Path in S3 bucket
+          # Option 3: PVC Storage (comment out storageUri above and use this instead)  
+          # storageUri: 'pvc://model-pvc/granite-3-1-8b-instruct'  # PVC name and model path
           args:
             - '--max-model-len=4096'  # Model-specific context length
           resources:  # GPU resource requirements
@@ -276,6 +677,136 @@ items:
               amd.com/gpu: '1'  # Must match the GPU type in ServingRuntime
 ```
 
+#### Example: S3 Storage Deployment
+
+Deploy a model from S3-compatible storage using a data connection:
+
+```yaml
+# serving-s3-storage.yaml
+apiVersion: v1
+kind: List
+items:
+  # ServingRuntime (same as basic example)
+  - apiVersion: serving.kserve.io/v1alpha1
+    kind: ServingRuntime
+    metadata:
+      name: s3-model
+      labels:
+        opendatahub.io/dashboard: 'true'
+    spec:
+      containers:
+        - name: kserve-container
+          image: 'quay.io/modh/vllm:rhoai-2.20-cuda'
+          args:
+            - '--port=8080'
+            - '--model=/mnt/models'
+            - '--served-model-name={{.Name}}'
+            - '--tensor-parallel-size=1'
+          resources:
+            limits:
+              nvidia.com/gpu: '1'
+      supportedModelFormats:
+        - name: vLLM
+          autoSelect: true
+  
+  # InferenceService using S3 storage
+  - apiVersion: serving.kserve.io/v1beta1
+    kind: InferenceService
+    metadata:
+      name: s3-model
+      labels:
+        opendatahub.io/dashboard: 'true'
+    spec:
+      predictor:
+        model:
+          modelFormat:
+            name: vLLM
+          runtime: s3-model
+          # Use storage field for S3 connections
+          storage:
+            key: aws-connection-my-storage  # Name of your S3 data connection
+            path: models/granite-7b-instruct/  # Path within the S3 bucket
+          args:
+            - '--max-model-len=4096'
+          resources:
+            requests:
+              nvidia.com/gpu: '1'
+            limits:
+              nvidia.com/gpu: '1'
+        tolerations:
+          - effect: NoSchedule
+            key: nvidia.com/gpu
+            operator: Exists
+```
+
+**Prerequisites for S3 storage:**
+1. Create an S3 data connection named `aws-connection-my-storage` (see [Data Connections](/docs/data-connections/))
+2. Upload your model files to `s3://your-bucket/models/granite-7b-instruct/`
+
+#### Example: PVC Storage Deployment
+
+Deploy a model from a Persistent Volume Claim:
+
+```yaml
+# serving-pvc-storage.yaml
+apiVersion: v1
+kind: List
+items:
+  # ServingRuntime (same as basic example)
+  - apiVersion: serving.kserve.io/v1alpha1
+    kind: ServingRuntime
+    metadata:
+      name: pvc-model
+      labels:
+        opendatahub.io/dashboard: 'true'
+    spec:
+      containers:
+        - name: kserve-container
+          image: 'quay.io/modh/vllm:rhoai-2.20-cuda'
+          args:
+            - '--port=8080'
+            - '--model=/mnt/models'
+            - '--served-model-name={{.Name}}'
+            - '--tensor-parallel-size=1'
+          resources:
+            limits:
+              nvidia.com/gpu: '1'
+      supportedModelFormats:
+        - name: vLLM
+          autoSelect: true
+  
+  # InferenceService using PVC storage
+  - apiVersion: serving.kserve.io/v1beta1
+    kind: InferenceService
+    metadata:
+      name: pvc-model
+      labels:
+        opendatahub.io/dashboard: 'true'
+    spec:
+      predictor:
+        model:
+          modelFormat:
+            name: vLLM
+          runtime: pvc-model
+          # Use storageUri with pvc:// scheme
+          storageUri: 'pvc://model-pvc/llama-2-7b-chat'  # pvc://<pvc-name>/<model-path>
+          args:
+            - '--max-model-len=4096'
+          resources:
+            requests:
+              nvidia.com/gpu: '1'
+            limits:
+              nvidia.com/gpu: '1'
+        tolerations:
+          - effect: NoSchedule
+            key: nvidia.com/gpu
+            operator: Exists
+```
+
+**Prerequisites for PVC storage:**
+1. Create a PVC named `model-pvc` with RWX access mode
+2. Copy model files to the PVC at path `llama-2-7b-chat/`
+3. See [Setting Up PVCs for Model Storage](/docs/extras/model-pvc-setup/) for detailed instructions
 
 #### Advanced Model Deployment with Route and Authentication
 
@@ -1411,9 +1942,9 @@ if (pods.items.length > 0) {
 4. Handle API version compatibility
 5. Implement proper error handling for failed operations
 
-## Appendix: Available ModelCars
+## Appendix: Pre-built ModelCars
 
-The following table lists all available pre-built ModelCars from Red Hat's validated models collection. These models are optimized for deployment on OpenShift AI and can be used directly in the `storageUri` field of your InferenceService configuration.
+The following table lists all available pre-built ModelCars from Red Hat's validated models collection. These models are optimized for deployment on OpenShift AI and can be used with the OCI registry storage method by specifying the URI in the `storageUri` field of your InferenceService configuration.
 
 | Model ID | ModelCar URI |
 |----------|-------------|
@@ -2441,4 +2972,12 @@ This section covers model serving capabilities in Red Hat OpenShift AI, includin
 
 ## Available Serving Options
 
-- **[ModelCars](modelcar/)** - Production-ready model deployments with KServe infrastructure
+- **[Large Language Models (LLMs)](llms/)** - Deploy and serve LLMs from various storage sources including ModelCars, S3, and PVCs
+
+# Useful Extras
+
+This section contains supplementary guides and how-to documents that complement the main documentation. These guides provide detailed instructions for specific tasks that support multiple use cases across OpenShift AI.
+
+## Available Guides
+
+- **[Setting Up PVCs for Model Storage](model-pvc-setup/)** - Learn how to create and configure Persistent Volume Claims for storing and serving large language models

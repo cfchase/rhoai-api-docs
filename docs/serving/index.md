@@ -12,4 +12,4 @@ This section covers model serving capabilities in Red Hat OpenShift AI, includin
 
 ## Available Serving Options
 
-- **[ModelCars](modelcar/)** - Production-ready model deployments with KServe infrastructure
+- **[Large Language Models (LLMs)](llms/)** - Deploy and serve LLMs from various storage sources including ModelCars, S3, and PVCs

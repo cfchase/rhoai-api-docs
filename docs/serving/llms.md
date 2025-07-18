@@ -1,14 +1,14 @@
 ---
 layout: page
-title: ModelCars
+title: Serving Large Language Models (LLMs)
 parent: Serving
 nav_order: 1
-permalink: /docs/serving/modelcar/
+permalink: /docs/serving/llms/
 ---
 
-# Serving Models with ModelCars
+# Serving Large Language Models (LLMs)
 
-ModelCar serving in Red Hat OpenShift AI provides a comprehensive solution for deploying and serving machine learning models at scale. Using the KServe infrastructure, ModelCars enable production-ready model deployments with features like GPU acceleration, autoscaling, and secure external access.
+Red Hat OpenShift AI provides a comprehensive solution for deploying and serving Large Language Models (LLMs) at scale. Using the KServe infrastructure, you can deploy models from various storage sources including pre-built ModelCars (OCI registries), S3-compatible storage, and Persistent Volume Claims (PVCs).
 
 ## Overview
 
@@ -21,7 +21,7 @@ A complete model serving deployment in OpenShift AI consists of three key resour
 
 2. **InferenceService**: Defines WHAT model to serve
    - References the ServingRuntime to use
-   - Specifies the model location (storageUri)
+   - Specifies the model location (storageUri or storage)
    - Controls deployment parameters (replicas, resources, tolerations)
    - Manages the model lifecycle
 
@@ -112,6 +112,79 @@ From the AcceleratorProfile, note:
 
 If no AcceleratorProfiles exist, you can still deploy models by manually specifying GPU resources and tolerations based on your cluster configuration.
 
+## Storage Options for LLMs
+
+OpenShift AI supports three primary storage methods for serving LLMs. Each method has specific use cases and configuration requirements:
+
+### 1. ModelCars (OCI Registry)
+
+Pre-built, optimized container images from Red Hat's registry or other OCI-compliant registries.
+
+**When to use:**
+- Quick deployment of Red Hat validated models
+- Models that are pre-optimized and containerized
+- When you don't need to modify model files
+
+**Configuration:**
+```yaml
+spec:
+  predictor:
+    model:
+      storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.5'
+```
+
+### 2. S3-Compatible Storage
+
+Models stored in S3-compatible object storage (AWS S3, MinIO, OpenShift Data Foundation).
+
+**When to use:**
+- Models stored in object storage
+- When you need to share models across multiple deployments
+- Integration with existing S3 infrastructure
+
+**Configuration:**
+```yaml
+spec:
+  predictor:
+    model:
+      storage:
+        key: aws-connection-my-storage  # Name of your S3 data connection
+        path: models/granite-7b-instruct/  # Path within the S3 bucket
+```
+
+**Prerequisites:**
+- Create an S3 data connection in your namespace (see [Data Connections](/docs/data-connections/))
+- Ensure the model files are uploaded to the specified S3 path
+
+### 3. Persistent Volume Claims (PVC)
+
+Models stored on Kubernetes persistent volumes.
+
+**When to use:**
+- Models already available on shared storage
+- When you need ReadWriteMany (RWX) access
+- Custom model files or modified versions
+
+**Configuration:**
+```yaml
+spec:
+  predictor:
+    model:
+      storageUri: 'pvc://model-pvc/llama-2-7b-chat'  # pvc://<pvc-name>/<model-path>
+```
+
+**Prerequisites:**
+- PVC must exist in the same namespace
+- Model files must be copied to the PVC (see [Setting Up PVCs for Model Storage](/docs/extras/model-pvc-setup/))
+
+### Choosing a Storage Method
+
+| Storage Type | Best For | Pros | Cons |
+|-------------|----------|------|------|
+| **ModelCars (OCI)** | Production deployments | Pre-optimized, versioned, easy to deploy | Limited to available images |
+| **S3 Storage** | Shared models, cloud environments | Centralized storage, easy updates | Requires S3 setup, potential latency |
+| **PVC Storage** | Custom models, on-premise | Full control, no external dependencies | Requires PVC management, manual uploads |
+
 ## Creating Model Deployments
 
 Model deployments require creating both a ServingRuntime and InferenceService. Optionally, you can also create a Route for external access. The resources should be created in order: ServingRuntime → InferenceService → Route.
@@ -126,7 +199,7 @@ The declarative approach uses YAML files to define your model serving stack. Thi
 
 #### Basic Model Deployment
 
-A standard deployment with GPU acceleration:
+The following examples show how to deploy the same model using different storage options. Choose the one that matches your storage method:
 
 ```yaml
 # serving-basic.yaml
@@ -198,7 +271,14 @@ items:
           modelFormat:
             name: vLLM
           runtime: granite-model  # Must match InferenceService name
+          # Option 1: ModelCar (OCI Registry)
           storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.5'
+          # Option 2: S3 Storage (comment out storageUri above and use this instead)
+          # storage:
+          #   key: aws-connection-my-storage  # Your S3 data connection name
+          #   path: models/granite-3-1-8b-instruct/  # Path in S3 bucket
+          # Option 3: PVC Storage (comment out storageUri above and use this instead)  
+          # storageUri: 'pvc://model-pvc/granite-3-1-8b-instruct'  # PVC name and model path
           args:
             - '--max-model-len=4096'  # Model-specific context length
           resources:  # GPU resource requirements
@@ -284,6 +364,136 @@ items:
               amd.com/gpu: '1'  # Must match the GPU type in ServingRuntime
 ```
 
+#### Example: S3 Storage Deployment
+
+Deploy a model from S3-compatible storage using a data connection:
+
+```yaml
+# serving-s3-storage.yaml
+apiVersion: v1
+kind: List
+items:
+  # ServingRuntime (same as basic example)
+  - apiVersion: serving.kserve.io/v1alpha1
+    kind: ServingRuntime
+    metadata:
+      name: s3-model
+      labels:
+        opendatahub.io/dashboard: 'true'
+    spec:
+      containers:
+        - name: kserve-container
+          image: 'quay.io/modh/vllm:rhoai-2.20-cuda'
+          args:
+            - '--port=8080'
+            - '--model=/mnt/models'
+            - '--served-model-name={{.Name}}'
+            - '--tensor-parallel-size=1'
+          resources:
+            limits:
+              nvidia.com/gpu: '1'
+      supportedModelFormats:
+        - name: vLLM
+          autoSelect: true
+  
+  # InferenceService using S3 storage
+  - apiVersion: serving.kserve.io/v1beta1
+    kind: InferenceService
+    metadata:
+      name: s3-model
+      labels:
+        opendatahub.io/dashboard: 'true'
+    spec:
+      predictor:
+        model:
+          modelFormat:
+            name: vLLM
+          runtime: s3-model
+          # Use storage field for S3 connections
+          storage:
+            key: aws-connection-my-storage  # Name of your S3 data connection
+            path: models/granite-7b-instruct/  # Path within the S3 bucket
+          args:
+            - '--max-model-len=4096'
+          resources:
+            requests:
+              nvidia.com/gpu: '1'
+            limits:
+              nvidia.com/gpu: '1'
+        tolerations:
+          - effect: NoSchedule
+            key: nvidia.com/gpu
+            operator: Exists
+```
+
+**Prerequisites for S3 storage:**
+1. Create an S3 data connection named `aws-connection-my-storage` (see [Data Connections](/docs/data-connections/))
+2. Upload your model files to `s3://your-bucket/models/granite-7b-instruct/`
+
+#### Example: PVC Storage Deployment
+
+Deploy a model from a Persistent Volume Claim:
+
+```yaml
+# serving-pvc-storage.yaml
+apiVersion: v1
+kind: List
+items:
+  # ServingRuntime (same as basic example)
+  - apiVersion: serving.kserve.io/v1alpha1
+    kind: ServingRuntime
+    metadata:
+      name: pvc-model
+      labels:
+        opendatahub.io/dashboard: 'true'
+    spec:
+      containers:
+        - name: kserve-container
+          image: 'quay.io/modh/vllm:rhoai-2.20-cuda'
+          args:
+            - '--port=8080'
+            - '--model=/mnt/models'
+            - '--served-model-name={{.Name}}'
+            - '--tensor-parallel-size=1'
+          resources:
+            limits:
+              nvidia.com/gpu: '1'
+      supportedModelFormats:
+        - name: vLLM
+          autoSelect: true
+  
+  # InferenceService using PVC storage
+  - apiVersion: serving.kserve.io/v1beta1
+    kind: InferenceService
+    metadata:
+      name: pvc-model
+      labels:
+        opendatahub.io/dashboard: 'true'
+    spec:
+      predictor:
+        model:
+          modelFormat:
+            name: vLLM
+          runtime: pvc-model
+          # Use storageUri with pvc:// scheme
+          storageUri: 'pvc://model-pvc/llama-2-7b-chat'  # pvc://<pvc-name>/<model-path>
+          args:
+            - '--max-model-len=4096'
+          resources:
+            requests:
+              nvidia.com/gpu: '1'
+            limits:
+              nvidia.com/gpu: '1'
+        tolerations:
+          - effect: NoSchedule
+            key: nvidia.com/gpu
+            operator: Exists
+```
+
+**Prerequisites for PVC storage:**
+1. Create a PVC named `model-pvc` with RWX access mode
+2. Copy model files to the PVC at path `llama-2-7b-chat/`
+3. See [Setting Up PVCs for Model Storage](/docs/extras/model-pvc-setup/) for detailed instructions
 
 #### Advanced Model Deployment with Route and Authentication
 
@@ -1419,9 +1629,9 @@ if (pods.items.length > 0) {
 4. Handle API version compatibility
 5. Implement proper error handling for failed operations
 
-## Appendix: Available ModelCars
+## Appendix: Pre-built ModelCars
 
-The following table lists all available pre-built ModelCars from Red Hat's validated models collection. These models are optimized for deployment on OpenShift AI and can be used directly in the `storageUri` field of your InferenceService configuration.
+The following table lists all available pre-built ModelCars from Red Hat's validated models collection. These models are optimized for deployment on OpenShift AI and can be used with the OCI registry storage method by specifying the URI in the `storageUri` field of your InferenceService configuration.
 
 | Model ID | ModelCar URI |
 |----------|-------------|
