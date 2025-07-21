@@ -14,7 +14,7 @@ Red Hat OpenShift AI provides a comprehensive solution for deploying and serving
 
 ## Overview
 
-A complete model serving deployment in OpenShift AI consists of three key resources working together:
+A complete model serving deployment in OpenShift AI consists of two key resources working together:
 
 1. **ServingRuntime**: Defines HOW models are served
    - Specifies the serving container (e.g., vLLM, Triton, MLServer)
@@ -26,13 +26,9 @@ A complete model serving deployment in OpenShift AI consists of three key resour
    - Specifies the model location (storageUri or storage)
    - Controls deployment parameters (replicas, resources, tolerations)
    - Manages the model lifecycle
+   - When labeled with `networking.kserve.io/visibility: exposed`, automatically creates an OpenShift Route for external access
 
-3. **Route** (Optional): Provides external access
-   - Exposes the model endpoint outside the cluster
-   - Configures TLS termination
-   - Enables secure external access
-
-These resources must be created together to deploy a functional model serving endpoint. **Important**: The ServingRuntime and InferenceService names MUST match exactly - this is a requirement for the OpenShift AI dashboard to properly display and manage the model deployment. Together they create the pods, services, and other Kubernetes resources needed to serve your model.
+These two resources must be created together to deploy a functional model serving endpoint. **Important**: The ServingRuntime and InferenceService names MUST match exactly - this is a requirement for the OpenShift AI dashboard to properly display and manage the model deployment. Together they create the pods, services, routes, and other Kubernetes resources needed to serve your model.
 
 ## Important: Naming Convention
 
@@ -199,9 +195,9 @@ spec:
 
 ## Creating Model Deployments
 
-Model deployments require creating both a ServingRuntime and InferenceService. Optionally, you can also create a Route for external access. The resources should be created in order: ServingRuntime → InferenceService → Route.
+Model deployments require creating both a ServingRuntime and InferenceService. The resources should be created in order: ServingRuntime → InferenceService.
 
-**Important for External Access**: To expose your model externally with a Route, you MUST add the label `networking.kserve.io/visibility: exposed` to your InferenceService. Without this label, the service will only be accessible internally within the cluster.
+**Important for External Access**: To expose your model externally, you MUST add the label `networking.kserve.io/visibility: exposed` to your InferenceService. When this label is present, OpenShift AI automatically creates an OpenShift Route for external HTTPS access. Without this label, the service will only be accessible internally within the cluster.
 
 ### Complete Working Example
 
@@ -275,47 +271,22 @@ spec:
         operator: Exists                                   # Schedule on GPU nodes
 ```
 
-**3. Route** (`granite-model-route.yaml`):
-```yaml
-# granite-model-route.yaml - provides external HTTPS access
-apiVersion: route.openshift.io/v1
-kind: Route
-metadata:
-  name: granite-model
-  labels:
-    inferenceservice-name: granite-model                   # Links to InferenceService
-spec:
-  to:
-    kind: Service
-    name: granite-model-predictor                          # Auto-created service name
-    weight: 100
-  port:
-    targetPort: http
-  tls:                                                     # TLS configuration
-    termination: edge                                      # TLS terminated at router
-    insecureEdgeTerminationPolicy: Redirect                # Force HTTPS
-  wildcardPolicy: None
-```
-
 **Deploy the complete example:**
 ```bash
 # 1. Create ServingRuntime first
 kubectl apply -f granite-model-runtime.yaml -n my-namespace
 
-# 2. Create InferenceService
+# 2. Create InferenceService (route will be created automatically)
 kubectl apply -f granite-model-service.yaml -n my-namespace
 
 # 3. Wait for the model to be ready (this may take several minutes)
 kubectl wait --for=condition=Ready inferenceservice/granite-model --timeout=600s -n my-namespace
 
-# 4. Create the Route for external access
-kubectl apply -f granite-model-route.yaml -n my-namespace
-
-# 5. Get the external URL
+# 4. Get the automatically created route URL
 ROUTE_URL=$(kubectl get route granite-model -n my-namespace -o jsonpath='{.spec.host}')
 echo "Model endpoint available at: https://$ROUTE_URL/v2/models/granite-model"
 
-# 6. Test the deployment
+# 5. Test the deployment
 curl -X POST "https://$ROUTE_URL/v2/models/granite-model/infer" \
   -H "Content-Type: application/json" \
   -d '{
@@ -624,7 +595,7 @@ URL:.status.url
 # List all ServingRuntimes
 kubectl get servingruntimes
 
-# List Routes for external access
+# List Routes for external access (automatically created)
 kubectl get routes -l inferenceservice-name
 
 # List all resources for a specific model deployment
@@ -759,21 +730,6 @@ kubectl patch servingruntime granite-runtime --type='merge' -p='
 ```
 
 
-### Update Route Configuration
-
-```bash
-# Update TLS configuration
-kubectl patch route granite-model --type='merge' -p='
-{
-  "spec": {
-    "tls": {
-      "termination": "reencrypt",
-      "certificate": "-----BEGIN CERTIFICATE-----\n<YOUR_CERTIFICATE_CONTENT>\n-----END CERTIFICATE-----",
-      "key": "-----BEGIN PRIVATE KEY-----\n<YOUR_PRIVATE_KEY_CONTENT>\n-----END PRIVATE KEY-----"
-    }
-  }
-}'
-```
 
 ## Deleting Model Deployments
 
@@ -782,8 +738,7 @@ When deleting model deployments, remove resources in the reverse order of creati
 ### Basic Deletion
 
 ```bash
-# Delete in reverse order: Route → InferenceService → ServingRuntime
-kubectl delete route granite-model
+# Delete InferenceService (routes are automatically cleaned up)
 kubectl delete inferenceservice granite-model
 kubectl delete servingruntime granite-runtime
 ```
@@ -793,7 +748,7 @@ kubectl delete servingruntime granite-runtime
 ```bash
 # Delete all resources with a specific label
 MODEL_NAME="granite-model"
-kubectl delete route,inferenceservice,servingruntime \
+kubectl delete inferenceservice,servingruntime \
   -l serving.kserve.io/inferenceservice=$MODEL_NAME
 
 # Force deletion if stuck
@@ -1117,29 +1072,12 @@ spec:
         value: A100
 ```
 
-**Route** (`multi-gpu-model-route.yaml`):
-```yaml
-# multi-gpu-model-route.yaml
-apiVersion: route.openshift.io/v1
-kind: Route
-metadata:
-  name: multi-gpu-model
-spec:
-  to:
-    kind: Service
-    name: multi-gpu-model-predictor
-  tls:
-    termination: edge
-    insecureEdgeTerminationPolicy: Redirect
-```
 
 Deploy multi-GPU model:
 ```bash
 kubectl apply -f multi-gpu-model-runtime.yaml
 kubectl apply -f multi-gpu-model-service.yaml
-# Wait for service to be created, then apply route
 kubectl wait --for=condition=Ready inferenceservice/multi-gpu-model --timeout=300s
-kubectl apply -f multi-gpu-model-route.yaml
 ```
 
 ### Example 5: S3 Storage Deployment
@@ -1308,7 +1246,6 @@ kubectl apply -f pvc-model-service.yaml
 kubectl apply -f granite-model-runtime.yaml
 kubectl apply -f granite-model-service.yaml
 kubectl wait --for=condition=Ready inferenceservice/granite-model --timeout=600s
-kubectl apply -f granite-model-route.yaml
 
 # Example 1: Custom vLLM Arguments
 kubectl apply -f custom-args-runtime.yaml
@@ -1326,7 +1263,6 @@ kubectl apply -f amd-gpu-service.yaml
 kubectl apply -f multi-gpu-model-runtime.yaml
 kubectl apply -f multi-gpu-model-service.yaml
 kubectl wait --for=condition=Ready inferenceservice/multi-gpu-model --timeout=300s
-kubectl apply -f multi-gpu-model-route.yaml
 
 # Example 5: S3 Storage
 kubectl apply -f s3-model-secret.yaml
@@ -1344,7 +1280,7 @@ kubectl get inferenceservice -w
 kubectl port-forward service/<model-name>-predictor 8080:80
 curl http://localhost:8080/v2/models
 
-# Test external routes
+# Test external routes (automatically created for exposed services)
 ROUTE_URL=$(kubectl get route <model-name> -o jsonpath='{.spec.host}')
 curl https://$ROUTE_URL/v2/models
 ```
@@ -1395,7 +1331,7 @@ kubectl describe pod -l serving.kserve.io/inferenceservice=<model-name>
 #### Route Not Accessible
 
 ```bash
-# Check route status
+# Check route status (automatically created when networking.kserve.io/visibility: exposed is set)
 kubectl get route <model-name> -o jsonpath='{.status.ingress[0].conditions[?(@.type=="Admitted")]}'
 
 # Verify service exists
