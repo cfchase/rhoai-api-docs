@@ -421,7 +421,7 @@ A complete model serving deployment in OpenShift AI consists of three key resour
 1. **ServingRuntime**: Defines HOW models are served
    - Specifies the serving container (e.g., vLLM, Triton, MLServer)
    - Configures runtime parameters and environment
-   - Sets resource requirements and hardware acceleration
+   - Sets hardware acceleration annotations and model serving arguments
 
 2. **InferenceService**: Defines WHAT model to serve
    - References the ServingRuntime to use
@@ -538,8 +538,8 @@ spec:
 ```
 
 **See examples:**
-- [Example 1: Basic/Minimal Configuration](#example-1-basicminimal-configuration)
-- [Example 2-5](#example-2-autoscaling-and-load-balancing) - All use ModelCar storage
+- [Complete Working Example](#complete-working-example) - Full deployment with GPU and external access
+- [Examples 1-4](#example-1-custom-vllm-arguments) - All use ModelCar storage
 
 ### 2. S3-Compatible Storage
 
@@ -565,7 +565,7 @@ spec:
 - Ensure the model files are uploaded to the specified S3 path
 
 **See example:**
-- [Example 7: S3 Storage Deployment](#example-7-s3-storage-deployment)
+- [Example 5: S3 Storage Deployment](#example-5-s3-storage-deployment)
 
 ### 3. Persistent Volume Claims (PVC)
 
@@ -589,7 +589,7 @@ spec:
 - Model files must be copied to the PVC (see [Setting Up PVCs for Model Storage](/docs/extras/model-pvc-setup/))
 
 **See example:**
-- [Example 8: PVC Storage Deployment](#example-8-pvc-storage-deployment)
+- [Example 6: PVC Storage Deployment](#example-6-pvc-storage-deployment)
 
 ### Choosing a Storage Method
 
@@ -630,12 +630,6 @@ spec:
         - '--model=/mnt/models'                  # Model mount path
         - '--served-model-name={{.Name}}'        # Use InferenceService name
         - '--max-model-len=4096'                 # Maximum context length
-      resources:
-        limits:
-          memory: 24Gi               # Memory limit
-          nvidia.com/gpu: '1'        # GPU allocation
-        requests:
-          memory: 16Gi               # Memory request
       volumeMounts:
         - mountPath: /dev/shm        # Shared memory mount for GPU performance
           name: shm
@@ -759,7 +753,7 @@ GPU support requires three key configurations:
      opendatahub.io/recommended-accelerators: '["nvidia.com/gpu"]'
    ```
 
-2. **Resource Requests/Limits** (in both ServingRuntime and InferenceService):
+2. **Resource Requests/Limits** (in InferenceService only):
    ```yaml
    resources:
      requests:
@@ -777,7 +771,7 @@ GPU support requires three key configurations:
    ```
 
 **See also:**
-- [Example 4: Multiple GPUs on a Single Node](#example-4-multiple-gpus-on-a-single-node) - Multi-GPU with tensor parallelism
+- [Example 4: Single Node, Multi GPU](#example-4-single-node-multi-gpu) - Multi-GPU with tensor parallelism
 
 #### Memory and Performance Optimization
 
@@ -803,7 +797,7 @@ volumeMounts:
 - Improves model loading and inference speed
 
 **See also:**
-- [Example 4: Multiple GPUs on a Single Node](#example-4-multiple-gpus-on-a-single-node) - Uses 16Gi shared memory for large models
+- [Example 4: Single Node, Multi GPU](#example-4-single-node-multi-gpu) - Uses 32Gi shared memory for large models
 
 #### Model-Specific Arguments
 
@@ -820,14 +814,14 @@ args:
 
 **Common argument patterns:**
 - **Small models (7-8B)**: `--max-model-len=4096`
-- **Large models (70B+)**: `--max-model-len=2048`, `--tensor-parallel-size=2`
+- **Large models (70B+)**: `--max-model-len=8192`, `--tensor-parallel-size=4`, `--distributed-executor-backend=mp`
 - **Production**: Consider resource limits and autoscaling
 
 **Important**: When using `--tensor-parallel-size` greater than 1, you must also include `--distributed-executor-backend=mp`
 
 **See also:**
 - [Example 1: Custom vLLM Arguments](#example-1-custom-vllm-arguments) - Various configurations
-- [Example 4: Multiple GPUs on a Single Node](#example-4-multiple-gpus-on-a-single-node) - Multi-GPU specific arguments
+- [Example 4: Single Node, Multi GPU](#example-4-single-node-multi-gpu) - Multi-GPU specific arguments
 
 #### Monitoring and Observability
 
@@ -873,7 +867,7 @@ labels:
 
 ### Minimal Configuration
 
-If you need a truly minimal deployment without GPU or external access:
+If you need a minimal deployment with basic GPU support:
 
 **Minimal ServingRuntime:**
 ```yaml
@@ -881,13 +875,18 @@ apiVersion: serving.kserve.io/v1alpha1
 kind: ServingRuntime
 metadata:
   name: minimal-model
+  annotations:
+    opendatahub.io/accelerator-name: migrated-gpu
+  labels:
+    opendatahub.io/dashboard: 'true'
 spec:
   containers:
     - name: kserve-container
-      image: 'quay.io/modh/vllm:rhoai-2.20-cpu'  # CPU-only image
+      image: 'quay.io/modh/vllm:rhoai-2.20-cuda'
       args:
         - '--port=8080'
         - '--model=/mnt/models'
+        - '--served-model-name={{.Name}}'
   supportedModelFormats:
     - name: vLLM
       autoSelect: true
@@ -899,6 +898,8 @@ apiVersion: serving.kserve.io/v1beta1
 kind: InferenceService
 metadata:
   name: minimal-model
+  labels:
+    opendatahub.io/dashboard: 'true'
 spec:
   predictor:
     model:
@@ -906,9 +907,20 @@ spec:
         name: vLLM
       runtime: minimal-model
       storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.5'
+      resources:
+        requests:
+          memory: 16Gi
+          nvidia.com/gpu: '1'
+        limits:
+          memory: 24Gi
+          nvidia.com/gpu: '1'
+    tolerations:
+      - effect: NoSchedule
+        key: nvidia.com/gpu
+        operator: Exists
 ```
 
-**Note**: This minimal configuration is suitable only for testing. For production use, always include proper resource allocation, GPU support (if needed), and monitoring.
+**Note**: This minimal configuration includes basic GPU support. For a complete example with external access and optimizations, see the [Complete Working Example](#complete-working-example) above.
 
 ## Runtime Images and Hardware Support
 
@@ -917,7 +929,7 @@ The examples above use `quay.io/modh/vllm:rhoai-2.20-cuda` for NVIDIA GPUs. Open
 - **NVIDIA GPUs**: `quay.io/modh/vllm:rhoai-2.20-cuda`
 - **AMD GPUs**: `quay.io/modh/vllm:rhoai-2.20-rocm`
 - **Intel Habana**: `quay.io/modh/vllm:rhoai-2.20-gaudi`
-- **CPU only**: `quay.io/modh/vllm:rhoai-2.20-cpu`
+- **CPU only**: `quay.io/modh/vllm:rhoai-2.20-cpu` (Note: CPU-only runtimes are primarily provided for ppc64le and s390x architectures)
 
 Example deployment for AMD GPUs:
 
@@ -946,9 +958,6 @@ spec:
         - python
         - '-m'
         - vllm.entrypoints.openai.api_server
-      resources:
-        limits:
-          amd.com/gpu: '1'  # AMD GPU resource identifier
   supportedModelFormats:
     - name: vLLM
       autoSelect: true
@@ -971,8 +980,12 @@ spec:
       runtime: amd-model
       storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.5'
       resources:
+        requests:
+          memory: 16Gi
+          amd.com/gpu: '1'  # AMD GPU resource identifier
         limits:
-          amd.com/gpu: '1'  # Must match the GPU type in ServingRuntime
+          memory: 24Gi
+          amd.com/gpu: '1'  # AMD GPU resource identifier
 ```
 
 Deploy AMD GPU model:
@@ -1216,15 +1229,17 @@ This section provides additional deployment examples for specific use cases, bui
 
 ### Example 1: Custom vLLM Arguments
 
-This example shows how to fine-tune vLLM parameters for specific model requirements:
+This example demonstrates various vLLM arguments for different use cases:
 
 **ServingRuntime** (`custom-args-runtime.yaml`):
 ```yaml
-# custom-args-runtime.yaml - optimized for high throughput
+# custom-args-runtime.yaml - custom vLLM configurations
 apiVersion: serving.kserve.io/v1alpha1
 kind: ServingRuntime
 metadata:
   name: custom-args-model
+  annotations:
+    opendatahub.io/accelerator-name: migrated-gpu
   labels:
     opendatahub.io/dashboard: 'true'
 spec:
@@ -1235,34 +1250,35 @@ spec:
         - '--port=8080'
         - '--model=/mnt/models'
         - '--served-model-name={{.Name}}'
-        # Custom configurations
-        - '--max-model-len=2048'         # Shorter context window
-      resources:
-        limits:
-          memory: 24Gi
-          nvidia.com/gpu: '1'
+        # Custom vLLM arguments for specific use cases
+        - '--max-model-len=8192'         # Larger context window
+        - '--download-dir=/tmp/models'   # Custom download directory
+        - '--trust-remote-code'          # Allow custom model code
+        - '--disable-log-requests'       # Reduce logging overhead
   supportedModelFormats:
     - name: vLLM
       autoSelect: true
 ```
 
-**Key configuration:**
-- Using a shorter context window (2048) allows for better memory efficiency
+**Common vLLM argument use cases:**
+- **Larger contexts**: `--max-model-len=8192` or higher for long documents
+- **Custom models**: `--trust-remote-code` for models with custom implementations
+- **Performance tuning**: `--disable-log-requests` to reduce overhead
+- **Storage management**: `--download-dir` to specify model cache location
 
-### Example 2: Autoscaling and Load Balancing
+### Example 2: Internal Only (No Route)
 
-Configure automatic scaling based on load to handle variable traffic:
+Deploy a model that is only accessible within the cluster, without external route exposure:
 
-**ServingRuntime** (`autoscale-model-runtime.yaml`):
+**ServingRuntime** (`internal-model-runtime.yaml`):
 ```yaml
-# autoscale-model-runtime.yaml - configured for production scaling
+# internal-model-runtime.yaml - for internal cluster access only
 apiVersion: serving.kserve.io/v1alpha1
 kind: ServingRuntime
 metadata:
-  name: autoscale-model
+  name: internal-model
   annotations:
-    prometheus.io/scrape: 'true'  # Enable metrics for autoscaling
-    prometheus.io/port: '8080'
+    opendatahub.io/accelerator-name: migrated-gpu
   labels:
     opendatahub.io/dashboard: 'true'
 spec:
@@ -1274,45 +1290,31 @@ spec:
         - '--model=/mnt/models'
         - '--served-model-name={{.Name}}'
         - '--max-model-len=4096'
-      resources:
-        requests:
-          memory: 16Gi
-          cpu: '2'           # Important for HPA scaling
-        limits:
-          memory: 24Gi
-          nvidia.com/gpu: '1'
   supportedModelFormats:
     - name: vLLM
       autoSelect: true
 ```
 
-**InferenceService** (`autoscale-model-service.yaml`):
+**InferenceService** (`internal-model-service.yaml`):
 ```yaml
-# autoscale-model-service.yaml - with autoscaling configuration
+# internal-model-service.yaml - NO external visibility label
 apiVersion: serving.kserve.io/v1beta1
 kind: InferenceService
 metadata:
-  name: autoscale-model
-  annotations:
-    serving.kserve.io/enable-prometheus-scraping: 'true'
+  name: internal-model
   labels:
-    networking.kserve.io/visibility: exposed
     opendatahub.io/dashboard: 'true'
+    # NOTE: No networking.kserve.io/visibility label = internal only
 spec:
   predictor:
-    # Autoscaling configuration
-    minReplicas: 1           # Minimum instances
-    maxReplicas: 5           # Maximum instances
-    scaleTarget: 70          # Target CPU utilization percentage
-    scaleMetric: cpu         # Scale based on CPU (or 'memory', 'gpu')
     model:
       modelFormat:
         name: vLLM
-      runtime: autoscale-model
+      runtime: internal-model
       storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.5'
       resources:
         requests:
-          cpu: '2'           # Must be set for CPU-based autoscaling
+          cpu: '2'
           memory: 16Gi
           nvidia.com/gpu: '1'
         limits:
@@ -1325,98 +1327,115 @@ spec:
         operator: Exists
 ```
 
-**Autoscaling behavior:**
-- Scales from 1 to 5 replicas based on CPU usage
-- Adds new pods when CPU exceeds 70%
-- Removes pods when CPU drops below threshold
-- Each replica gets its own GPU allocation
+**Key differences for internal-only deployment:**
+- **No visibility label**: Omit `networking.kserve.io/visibility: exposed`
+- **No Route creation**: OpenShift won't create an external route
+- **Cluster access only**: Model endpoint only accessible from within the cluster
 
-**Monitor autoscaling:**
+**Accessing the internal model:**
 ```bash
-# Watch HPA status
-kubectl get hpa -w
+# From another pod in the cluster
+kubectl run test-client --image=curlimages/curl --rm -it -- sh
 
-# View current replicas
-kubectl get pods -l serving.kserve.io/inferenceservice=autoscale-model
-
-# Generate load to trigger scaling
-for i in {1..100}; do
-  curl -X POST "https://$ROUTE_URL/v2/models/autoscale-model/infer" \
-    -H "Content-Type: application/json" \
-    -d '{"inputs": [{"name": "text_input", "shape": [1], "datatype": "BYTES", "data": ["Test request"]}]}' &
-done
+# Inside the test pod, access the model using the service URL
+curl -X POST http://internal-model-predictor.my-namespace.svc.cluster.local/v2/models/internal-model/infer \
+  -H "Content-Type: application/json" \
+  -d '{
+    "inputs": [{
+      "name": "text_input",
+      "shape": [1],
+      "datatype": "BYTES",
+      "data": ["What is OpenShift AI?"]
+    }]
+  }'
 ```
 
-### Example 3: CPU-Only Deployment
+**Use cases for internal-only models:**
+- Backend services that don't need external access
+- Models used by other cluster workloads
+- Development/testing environments
+- Security-sensitive deployments
 
-For development environments or models that don't require GPU acceleration:
+### Example 3: Alternate GPU (AMD)
 
-**ServingRuntime** (`cpu-model-runtime.yaml`):
+Deploy models on AMD GPUs using ROCm-enabled images:
+
+**ServingRuntime** (`amd-gpu-runtime.yaml`):
 ```yaml
-# cpu-model-runtime.yaml - CPU-only deployment
+# amd-gpu-runtime.yaml - for AMD GPU deployment
 apiVersion: serving.kserve.io/v1alpha1
 kind: ServingRuntime
 metadata:
-  name: cpu-model
+  name: amd-gpu-model
+  annotations:
+    opendatahub.io/accelerator-name: amd.com/gpu  # AMD GPU annotation
   labels:
     opendatahub.io/dashboard: 'true'
 spec:
   containers:
     - name: kserve-container
-      image: 'quay.io/modh/vllm:rhoai-2.20-cpu'  # CPU-specific image
+      image: 'quay.io/modh/vllm:rhoai-2.20-rocm'  # ROCm-enabled image
       args:
         - '--port=8080'
         - '--model=/mnt/models'
         - '--served-model-name={{.Name}}'
-        - '--max-model-len=2048'                # Smaller context for CPU
-      resources:
-        requests:
-          cpu: '8'                              # More CPUs instead of GPU
-          memory: 32Gi
-        limits:
-          cpu: '16'
-          memory: 48Gi
+        - '--max-model-len=4096'
   supportedModelFormats:
     - name: vLLM
       autoSelect: true
 ```
 
-**InferenceService** (`cpu-model-service.yaml`):
+**InferenceService** (`amd-gpu-service.yaml`):
 ```yaml
-# cpu-model-service.yaml - no GPU resources
+# amd-gpu-service.yaml - using AMD GPU resources
 apiVersion: serving.kserve.io/v1beta1
 kind: InferenceService
 metadata:
-  name: cpu-model
+  name: amd-gpu-model
   labels:
     opendatahub.io/dashboard: 'true'
+    networking.kserve.io/visibility: exposed
 spec:
   predictor:
     model:
       modelFormat:
         name: vLLM
-      runtime: cpu-model
-      # Using smaller model suitable for CPU
+      runtime: amd-gpu-model
       storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.5'
       resources:
         requests:
-          cpu: '8'
-          memory: 32Gi
+          cpu: '2'
+          memory: 16Gi
+          amd.com/gpu: '1'                         # Request AMD GPU
         limits:
-          cpu: '16'
-          memory: 48Gi
-    # No GPU tolerations needed
+          cpu: '4'
+          memory: 24Gi
+          amd.com/gpu: '1'                         # Limit AMD GPU
+    tolerations:
+      - effect: NoSchedule
+        key: amd.com/gpu                           # AMD GPU toleration
+        operator: Exists
 ```
 
-**CPU deployment considerations:**
-- **Performance**: Significantly slower than GPU (10-50x)
-- **Use cases**: Development, testing, low-traffic scenarios
-- **Model size**: Best with smaller models (≤8B parameters)
-- **Cost**: Lower infrastructure cost but higher latency
+**AMD GPU deployment notes:**
+- **Image selection**: Use ROCm-enabled vLLM images (`-rocm` suffix)
+- **Resource type**: Replace `nvidia.com/gpu` with `amd.com/gpu`
+- **Accelerator annotation**: Use `amd.com/gpu` in annotations
+- **Tolerations**: Update to match AMD GPU node taints
+- **Compatibility**: Ensure models are tested with ROCm/AMD GPUs
 
-### Example 4: Multiple GPUs on a Single Node
+**Verify AMD GPU availability:**
+```bash
+# Check for AMD GPU nodes
+kubectl get nodes -L amd.com/gpu
 
-Configure a model to use multiple GPUs with tensor parallelism:
+# Verify AMD GPU resources
+kubectl describe node <node-name> | grep amd.com/gpu
+```
+
+### Example 4: Single Node, Multi GPU
+
+Deploy large models across multiple GPUs on a single node using tensor parallelism:
 
 **ServingRuntime** (`multi-gpu-model-runtime.yaml`):
 ```yaml
@@ -1437,7 +1456,7 @@ spec:
         - '--port=8080'
         - '--model=/mnt/models'
         # Multi-GPU specific configurations
-        - '--tensor-parallel-size=2'     # Split model across 2 GPUs
+        - '--tensor-parallel-size=4'     # Split model across 4 GPUs
         - '--distributed-executor-backend=mp'  # Required for multi-GPU
         - '--max-model-len=8192'         # Larger context enabled by more memory
       env:
@@ -1446,10 +1465,6 @@ spec:
       volumeMounts:
         - mountPath: /dev/shm  # Shared memory critical for multi-GPU
           name: shm
-      resources:
-        limits:
-          memory: 96Gi
-          nvidia.com/gpu: '2'  # Must match tensor-parallel-size
   supportedModelFormats:
     - name: vLLM
       autoSelect: true
@@ -1457,7 +1472,7 @@ spec:
     - name: shm  # Larger shared memory for multi-GPU communication
       emptyDir:
         medium: Memory
-        sizeLimit: 16Gi
+        sizeLimit: 32Gi
 ```
 
 **InferenceService** (`multi-gpu-model-service.yaml`):
@@ -1487,13 +1502,13 @@ spec:
       storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-llama-3-3-70b-instruct:1.5'
       resources:
         requests:
-          cpu: '8'
-          memory: 80Gi
-          nvidia.com/gpu: '2'  # Must match runtime GPU count
-        limits:
           cpu: '16'
-          memory: 96Gi
-          nvidia.com/gpu: '2'  # Ensure same GPU count as runtime
+          memory: 160Gi
+          nvidia.com/gpu: '4'  # Must match runtime GPU count
+        limits:
+          cpu: '32'
+          memory: 192Gi
+          nvidia.com/gpu: '4'  # Ensure same GPU count as runtime
     tolerations:
       - effect: NoSchedule
         key: nvidia.com/gpu
@@ -1529,7 +1544,7 @@ kubectl wait --for=condition=Ready inferenceservice/multi-gpu-model --timeout=30
 kubectl apply -f multi-gpu-model-route.yaml
 ```
 
-### Example 6: S3 Storage Deployment
+### Example 5: S3 Storage Deployment
 
 Deploy a model from S3-compatible storage with included data connection:
 
@@ -1573,9 +1588,6 @@ spec:
         - '--port=8080'
         - '--model=/mnt/models'
         - '--served-model-name={{.Name}}'
-      resources:
-        limits:
-          nvidia.com/gpu: '1'
   supportedModelFormats:
     - name: vLLM
       autoSelect: true
@@ -1622,7 +1634,7 @@ kubectl apply -f s3-model-runtime.yaml
 kubectl apply -f s3-model-service.yaml
 ```
 
-### Example 7: PVC Storage Deployment
+### Example 6: PVC Storage Deployment
 
 Deploy a model from a Persistent Volume Claim:
 
@@ -1643,9 +1655,6 @@ spec:
         - '--port=8080'
         - '--model=/mnt/models'
         - '--served-model-name={{.Name}}'
-      resources:
-        limits:
-          nvidia.com/gpu: '1'
   supportedModelFormats:
     - name: vLLM
       autoSelect: true
@@ -1707,13 +1716,13 @@ kubectl apply -f granite-model-route.yaml
 kubectl apply -f custom-args-runtime.yaml
 kubectl apply -f custom-args-service.yaml
 
-# Example 2: Autoscaling
-kubectl apply -f autoscale-model-runtime.yaml
-kubectl apply -f autoscale-model-service.yaml
+# Example 2: Internal Only (No Route)
+kubectl apply -f internal-model-runtime.yaml
+kubectl apply -f internal-model-service.yaml
 
-# Example 3: CPU-Only Deployment
-kubectl apply -f cpu-model-runtime.yaml
-kubectl apply -f cpu-model-service.yaml
+# Example 3: Alternate GPU (AMD)
+kubectl apply -f amd-gpu-runtime.yaml
+kubectl apply -f amd-gpu-service.yaml
 
 # Example 4: Multi-GPU
 kubectl apply -f multi-gpu-model-runtime.yaml
@@ -1721,12 +1730,12 @@ kubectl apply -f multi-gpu-model-service.yaml
 kubectl wait --for=condition=Ready inferenceservice/multi-gpu-model --timeout=300s
 kubectl apply -f multi-gpu-model-route.yaml
 
-# Example 6: S3 Storage
+# Example 5: S3 Storage
 kubectl apply -f s3-model-secret.yaml
 kubectl apply -f s3-model-runtime.yaml
 kubectl apply -f s3-model-service.yaml
 
-# Example 7: PVC Storage
+# Example 6: PVC Storage
 kubectl apply -f pvc-model-runtime.yaml
 kubectl apply -f pvc-model-service.yaml
 
