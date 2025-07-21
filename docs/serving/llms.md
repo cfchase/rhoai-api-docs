@@ -137,7 +137,7 @@ spec:
 
 **See examples:**
 - [Example 1: Basic/Minimal Configuration](#example-1-basicminimal-configuration)
-- [Example 2-6](#example-2-adding-custom-vllm-arguments) - All use ModelCar storage
+- [Example 2-5](#example-2-autoscaling-and-load-balancing) - All use ModelCar storage
 
 ### 2. S3-Compatible Storage
 
@@ -375,7 +375,7 @@ GPU support requires three key configurations:
    ```
 
 **See also:**
-- [Example 5: Multiple GPUs on a Single Node](#example-5-multiple-gpus-on-a-single-node) - Multi-GPU with tensor parallelism
+- [Example 4: Multiple GPUs on a Single Node](#example-4-multiple-gpus-on-a-single-node) - Multi-GPU with tensor parallelism
 
 #### Memory and Performance Optimization
 
@@ -401,7 +401,7 @@ volumeMounts:
 - Improves model loading and inference speed
 
 **See also:**
-- [Example 5: Multiple GPUs on a Single Node](#example-5-multiple-gpus-on-a-single-node) - Uses 16Gi shared memory for large models
+- [Example 4: Multiple GPUs on a Single Node](#example-4-multiple-gpus-on-a-single-node) - Uses 16Gi shared memory for large models
 
 #### Model-Specific Arguments
 
@@ -414,21 +414,18 @@ args:
   - '--model=/mnt/models'            # Required: model mount path
   - '--served-model-name={{.Name}}'  # Use InferenceService name
   - '--max-model-len=4096'           # Context window size
-  - '--gpu-memory-utilization=0.9'   # Use 90% of GPU memory
-  - '--max-num-seqs=128'             # Max concurrent requests
-  - '--dtype=float16'                # Model precision
 ```
 
 **Common argument patterns:**
-- **Small models (7-8B)**: `--max-model-len=4096`, `--gpu-memory-utilization=0.9`
+- **Small models (7-8B)**: `--max-model-len=4096`
 - **Large models (70B+)**: `--max-model-len=2048`, `--tensor-parallel-size=2`
-- **Production**: Add `--max-num-seqs` to control concurrent requests
+- **Production**: Consider resource limits and autoscaling
 
 **Important**: When using `--tensor-parallel-size` greater than 1, you must also include `--distributed-executor-backend=mp`
 
 **See also:**
 - [Example 1: Custom vLLM Arguments](#example-1-custom-vllm-arguments) - Various configurations
-- [Example 5: Multiple GPUs on a Single Node](#example-5-multiple-gpus-on-a-single-node) - Multi-GPU specific arguments
+- [Example 4: Multiple GPUs on a Single Node](#example-4-multiple-gpus-on-a-single-node) - Multi-GPU specific arguments
 
 #### Monitoring and Observability
 
@@ -836,13 +833,8 @@ spec:
         - '--port=8080'
         - '--model=/mnt/models'
         - '--served-model-name={{.Name}}'
-        # Performance tuning for high throughput
-        - '--max-model-len=2048'         # Shorter context for more concurrent requests
-        - '--max-num-seqs=256'           # Higher concurrent request limit
-        - '--gpu-memory-utilization=0.95' # Use more GPU memory
-        - '--dtype=float16'              # FP16 precision
-        - '--enforce-eager'              # Disable CUDA graphs for stability
-        - '--enable-prefix-caching'      # Cache common prefixes
+        # Custom configurations
+        - '--max-model-len=2048'         # Shorter context window
       resources:
         limits:
           memory: 24Gi
@@ -852,87 +844,10 @@ spec:
       autoSelect: true
 ```
 
-**Key optimizations explained:**
-- `--max-num-seqs=256`: Allows more concurrent requests
-- `--enforce-eager`: More stable but slightly slower
-- `--enable-prefix-caching`: Speeds up requests with common prefixes
+**Key configuration:**
+- Using a shorter context window (2048) allows for better memory efficiency
 
-### Example 2: Quantized Model Deployment
-
-Deploy a quantized model (FP8 or W8A8) to reduce GPU memory requirements and enable larger models on smaller GPUs:
-
-**ServingRuntime** (`quantized-model-runtime.yaml`):
-```yaml
-# quantized-model-runtime.yaml - optimized for quantized models
-apiVersion: serving.kserve.io/v1alpha1
-kind: ServingRuntime
-metadata:
-  name: quantized-model
-  annotations:
-    opendatahub.io/accelerator-name: migrated-gpu
-  labels:
-    opendatahub.io/dashboard: 'true'
-spec:
-  containers:
-    - name: kserve-container
-      image: 'quay.io/modh/vllm:rhoai-2.20-cuda'
-      args:
-        - '--port=8080'
-        - '--model=/mnt/models'
-        - '--served-model-name={{.Name}}'
-        # Quantized model optimizations
-        - '--max-model-len=8192'         # Larger context possible with quantization
-        - '--gpu-memory-utilization=0.95' # Can use more memory with smaller model
-        - '--quantization=fp8'           # Enable FP8 quantization support
-      resources:
-        limits:
-          memory: 16Gi              # Less memory needed for quantized models
-          nvidia.com/gpu: '1'
-  supportedModelFormats:
-    - name: vLLM
-      autoSelect: true
-```
-
-**InferenceService** (`quantized-model-service.yaml`):
-```yaml
-# quantized-model-service.yaml - using FP8 quantized model
-apiVersion: serving.kserve.io/v1beta1
-kind: InferenceService
-metadata:
-  name: quantized-model
-  labels:
-    opendatahub.io/dashboard: 'true'
-    networking.kserve.io/visibility: exposed
-spec:
-  predictor:
-    model:
-      modelFormat:
-        name: vLLM
-      runtime: quantized-model
-      # Using FP8 quantized version of Llama 3.3 70B
-      storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-llama-3-3-70b-instruct-fp8-dynamic:1.5'
-      resources:
-        requests:
-          cpu: '4'
-          memory: 12Gi
-          nvidia.com/gpu: '1'
-        limits:
-          cpu: '8'
-          memory: 16Gi
-          nvidia.com/gpu: '1'
-    tolerations:
-      - effect: NoSchedule
-        key: nvidia.com/gpu
-        operator: Exists
-```
-
-**Benefits of quantized models:**
-- **70B model on single GPU**: FP8 quantization enables running 70B parameter models on a single A100 80GB
-- **Higher throughput**: Reduced memory bandwidth requirements
-- **Lower cost**: Use smaller/fewer GPUs
-- **Minimal accuracy loss**: FP8 and W8A8 maintain >99% of original model quality
-
-### Example 3: Autoscaling and Load Balancing
+### Example 2: Autoscaling and Load Balancing
 
 Configure automatic scaling based on load to handle variable traffic:
 
@@ -1030,7 +945,7 @@ for i in {1..100}; do
 done
 ```
 
-### Example 4: CPU-Only Deployment
+### Example 3: CPU-Only Deployment
 
 For development environments or models that don't require GPU acceleration:
 
@@ -1051,7 +966,6 @@ spec:
         - '--port=8080'
         - '--model=/mnt/models'
         - '--served-model-name={{.Name}}'
-        - '--device=cpu'                        # Explicitly use CPU
         - '--max-model-len=2048'                # Smaller context for CPU
       resources:
         requests:
@@ -1098,7 +1012,7 @@ spec:
 - **Model size**: Best with smaller models (≤8B parameters)
 - **Cost**: Lower infrastructure cost but higher latency
 
-### Example 5: Multiple GPUs on a Single Node
+### Example 4: Multiple GPUs on a Single Node
 
 Configure a model to use multiple GPUs with tensor parallelism:
 
@@ -1391,19 +1305,15 @@ kubectl apply -f granite-model-route.yaml
 kubectl apply -f custom-args-runtime.yaml
 kubectl apply -f custom-args-service.yaml
 
-# Example 2: Quantized Model
-kubectl apply -f quantized-model-runtime.yaml
-kubectl apply -f quantized-model-service.yaml
-
-# Example 3: Autoscaling
+# Example 2: Autoscaling
 kubectl apply -f autoscale-model-runtime.yaml
 kubectl apply -f autoscale-model-service.yaml
 
-# Example 4: CPU-Only Deployment
+# Example 3: CPU-Only Deployment
 kubectl apply -f cpu-model-runtime.yaml
 kubectl apply -f cpu-model-service.yaml
 
-# Example 5: Multi-GPU
+# Example 4: Multi-GPU
 kubectl apply -f multi-gpu-model-runtime.yaml
 kubectl apply -f multi-gpu-model-service.yaml
 kubectl wait --for=condition=Ready inferenceservice/multi-gpu-model --timeout=300s
