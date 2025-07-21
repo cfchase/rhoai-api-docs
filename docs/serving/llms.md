@@ -357,9 +357,8 @@ annotations:
 ```
 
 **See examples:**
-- [Example 3: Adding Authentication](#example-3-adding-authentication) - Dashboard integration with auth
-- [Example 4: Exposing with a Route](#example-4-exposing-with-a-route) - External visibility settings
-- [Example 5: Combining Authentication with External Route](#example-5-combining-authentication-with-external-route) - Both auth and external access
+- [Example 3: Exposing with a Route](#example-3-exposing-with-a-route) - External visibility settings
+- [Example 4: External Route with Custom Configuration](#example-4-external-route-with-custom-configuration) - Advanced route configuration
 
 ### Method 1: Declarative (Using YAML)
 
@@ -551,9 +550,6 @@ kubectl get inferenceservice granite-model -o jsonpath='{.status.conditions[?(@.
 # Filter by label
 kubectl get inferenceservices -l environment=production
 
-# Filter by authentication status
-kubectl get inferenceservices -o json | \
-  jq '.items[] | select(.metadata.annotations["security.opendatahub.io/enable-auth"] == "true") | .metadata.name'
 
 # List deployments using specific runtime
 RUNTIME="granite-runtime"
@@ -657,17 +653,6 @@ kubectl patch servingruntime granite-runtime --type='merge' -p='
 }'
 ```
 
-### Enable/Disable Authentication
-
-```bash
-# Enable authentication
-kubectl annotate inferenceservice granite-model \
-  security.opendatahub.io/enable-auth=true --overwrite
-
-# Disable authentication
-kubectl annotate inferenceservice granite-model \
-  security.opendatahub.io/enable-auth=false --overwrite
-```
 
 ### Update Route Configuration
 
@@ -850,79 +835,7 @@ kubectl apply -f custom-args-runtime.yaml
 kubectl apply -f custom-args-service.yaml
 ```
 
-### Example 3: Adding Authentication
-
-Add OpenShift AI authentication to secure your model endpoint:
-
-**ServingRuntime** (`auth-model-runtime.yaml`):
-```yaml
-# auth-model-runtime.yaml
-apiVersion: serving.kserve.io/v1alpha1
-kind: ServingRuntime
-metadata:
-  name: auth-model  # Must match InferenceService name
-  labels:
-    opendatahub.io/dashboard: 'true'
-spec:
-  containers:
-    - name: kserve-container
-      image: 'quay.io/modh/vllm:rhoai-2.20-cuda'
-      args:
-        - '--port=8080'
-        - '--model=/mnt/models'
-        - '--max-model-len=4096'
-      resources:
-        limits:
-          memory: 24Gi
-          nvidia.com/gpu: '1'
-  supportedModelFormats:
-    - name: vLLM
-      autoSelect: true
-```
-
-**InferenceService** (`auth-model-service.yaml`):
-```yaml
-# auth-model-service.yaml
-apiVersion: serving.kserve.io/v1beta1
-kind: InferenceService
-metadata:
-  name: auth-model
-  annotations:
-    # Authentication-specific annotations
-    security.opendatahub.io/enable-auth: 'true'  # Enable OpenShift AI auth
-    serving.kserve.io/deploymentMode: RawDeployment  # Required for auth
-  labels:
-    opendatahub.io/dashboard: 'true'
-spec:
-  predictor:
-    model:
-      modelFormat:
-        name: vLLM
-      runtime: auth-model  # Must match ServingRuntime name
-      storageUri: 'oci://registry.redhat.io/rhelai1/modelcar-granite-3-1-8b-instruct:1.5'
-      resources:
-        requests:
-          cpu: '2'
-          memory: 16Gi
-          nvidia.com/gpu: '1'
-        limits:
-          cpu: '4'
-          memory: 24Gi
-          nvidia.com/gpu: '1'
-    # GPU scheduling configuration
-    tolerations:
-      - effect: NoSchedule
-        key: nvidia.com/gpu
-        operator: Exists
-```
-
-Deploy with authentication:
-```bash
-kubectl apply -f auth-model-runtime.yaml
-kubectl apply -f auth-model-service.yaml
-```
-
-### Example 4: Exposing with a Route
+### Example 3: Exposing with a Route
 
 Add external access to your model through an OpenShift Route (without authentication):
 
@@ -1016,9 +929,9 @@ kubectl wait --for=condition=Ready inferenceservice/route-model --timeout=300s
 kubectl apply -f route-model-route.yaml
 ```
 
-### Example 5: Combining Authentication with External Route
+### Example 4: External Route with Custom Configuration
 
-For production deployments, you'll often want both authentication and external access:
+For production deployments with external access and custom runtime configurations:
 
 **ServingRuntime** (`secure-route-runtime.yaml`):
 ```yaml
@@ -1056,10 +969,6 @@ apiVersion: serving.kserve.io/v1beta1
 kind: InferenceService
 metadata:
   name: secure-route-model
-  annotations:
-    # Enable authentication
-    security.opendatahub.io/enable-auth: 'true'  # Enable OpenShift AI auth
-    serving.kserve.io/deploymentMode: RawDeployment  # Required for auth
   labels:
     # Enable external access
     networking.kserve.io/visibility: exposed  # Enables route creation
@@ -1088,7 +997,7 @@ spec:
 
 **Route** (`secure-route-route.yaml`):
 ```yaml
-# secure-route-route.yaml - external HTTPS access with auth
+# secure-route-route.yaml - external HTTPS access
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
@@ -1108,7 +1017,7 @@ spec:
   wildcardPolicy: None
 ```
 
-Deploy with authentication and external access:
+Deploy with external access:
 ```bash
 kubectl apply -f secure-route-runtime.yaml
 kubectl apply -f secure-route-service.yaml
@@ -1118,10 +1027,10 @@ kubectl apply -f secure-route-route.yaml
 
 # Get the external URL
 ROUTE_URL=$(kubectl get route secure-route-model -o jsonpath='{.spec.host}')
-echo "Model endpoint (requires auth): https://$ROUTE_URL/v2/models"
+echo "Model endpoint: https://$ROUTE_URL/v2/models"
 ```
 
-### Example 6: Multiple GPUs on a Single Node
+### Example 5: Multiple GPUs on a Single Node
 
 Configure a model to use multiple GPUs with tensor parallelism:
 
@@ -1175,8 +1084,6 @@ kind: InferenceService
 metadata:
   name: multi-gpu-model
   annotations:
-    security.opendatahub.io/enable-auth: 'true'
-    serving.kserve.io/deploymentMode: RawDeployment
     serving.kserve.io/enable-prometheus-scraping: 'true'  # Monitor multi-GPU usage
   labels:
     networking.kserve.io/visibility: exposed
@@ -1238,7 +1145,7 @@ kubectl wait --for=condition=Ready inferenceservice/multi-gpu-model --timeout=30
 kubectl apply -f multi-gpu-model-route.yaml
 ```
 
-### Example 7: S3 Storage Deployment
+### Example 6: S3 Storage Deployment
 
 Deploy a model from S3-compatible storage with included data connection:
 
@@ -1331,7 +1238,7 @@ kubectl apply -f s3-model-runtime.yaml
 kubectl apply -f s3-model-service.yaml
 ```
 
-### Example 8: PVC Storage Deployment
+### Example 7: PVC Storage Deployment
 
 Deploy a model from a Persistent Volume Claim:
 
@@ -1414,34 +1321,30 @@ kubectl apply -f minimal-service.yaml
 kubectl apply -f custom-args-runtime.yaml
 kubectl apply -f custom-args-service.yaml
 
-# Example 3: Authentication
-kubectl apply -f auth-model-runtime.yaml
-kubectl apply -f auth-model-service.yaml
-
-# Example 4: Route Exposure
+# Example 3: Route Exposure
 kubectl apply -f route-model-runtime.yaml
 kubectl apply -f route-model-service.yaml
 kubectl wait --for=condition=Ready inferenceservice/route-model --timeout=300s
 kubectl apply -f route-model-route.yaml
 
-# Example 5: Authentication + Route
+# Example 4: External Route with Custom Configuration
 kubectl apply -f secure-route-runtime.yaml
 kubectl apply -f secure-route-service.yaml
 kubectl wait --for=condition=Ready inferenceservice/secure-route-model --timeout=300s
 kubectl apply -f secure-route-route.yaml
 
-# Example 6: Multi-GPU
+# Example 5: Multi-GPU
 kubectl apply -f multi-gpu-model-runtime.yaml
 kubectl apply -f multi-gpu-model-service.yaml
 kubectl wait --for=condition=Ready inferenceservice/multi-gpu-model --timeout=300s
 kubectl apply -f multi-gpu-model-route.yaml
 
-# Example 7: S3 Storage
+# Example 6: S3 Storage
 kubectl apply -f s3-model-secret.yaml
 kubectl apply -f s3-model-runtime.yaml
 kubectl apply -f s3-model-service.yaml
 
-# Example 8: PVC Storage
+# Example 7: PVC Storage
 kubectl apply -f pvc-model-runtime.yaml
 kubectl apply -f pvc-model-service.yaml
 
@@ -1499,18 +1402,6 @@ kubectl describe pod -l serving.kserve.io/inferenceservice=<model-name>
 # - GPU not available: Check node labels and tolerations
 ```
 
-#### Authentication Errors
-
-```bash
-# Verify auth annotation
-kubectl get inferenceservice <model-name> -o jsonpath='{.metadata.annotations.security\.opendatahub\.io/enable-auth}'
-
-# Check service account
-kubectl get sa -l serving.kserve.io/inferenceservice=<model-name>
-
-# Verify RBAC
-kubectl auth can-i --list --as=system:serviceaccount:<namespace>:<sa-name>
-```
 
 #### Route Not Accessible
 
@@ -1570,13 +1461,10 @@ kubectl exec -it <pod-name> -- curl -w "@curl-format.txt" -o /dev/null -s http:/
 
 ### Security Considerations
 
-- **Always enable authentication** for production deployments:
-  ```yaml
-  security.opendatahub.io/enable-auth: 'true'
-  ```
 - Use TLS termination at the route level
 - Implement network policies to restrict access
 - Regularly update serving runtime images
+- Consider implementing authentication for production deployments
 
 ### Model Selection Guidelines
 
@@ -1618,7 +1506,6 @@ kubectl exec -it <pod-name> -- curl -w "@curl-format.txt" -o /dev/null -s http:/
 | Field | Type | Required | Description | Example |
 |-------|------|----------|-------------|---------|
 | `metadata.name` | string | Yes | Unique model identifier | `granite-model` |
-| `metadata.annotations.security.opendatahub.io/enable-auth` | string | No | Enable authentication | `'true'` or `'false'` |
 | `metadata.annotations.serving.kserve.io/deploymentMode` | string | No | Deployment mode | `RawDeployment` |
 | `metadata.labels.networking.kserve.io/visibility` | string | No | Network visibility (REQUIRED for external Route access) | `exposed` |
 | `spec.predictor.minReplicas` | integer | No | Minimum pod replicas | `1` |
@@ -1638,7 +1525,6 @@ kubectl exec -it <pod-name> -- curl -w "@curl-format.txt" -o /dev/null -s http:/
 |------------|----------|-------------|--------|
 | `opendatahub.io/dashboard` | Both | Display in OpenShift AI dashboard | `'true'` |
 | `openshift.io/display-name` | Both | Human-readable name | Any string |
-| `security.opendatahub.io/enable-auth` | InferenceService | Enable authentication | `'true'`, `'false'` |
 | `serving.kserve.io/deploymentMode` | InferenceService | Deployment strategy | `RawDeployment`, `Serverless` |
 | `serving.kserve.io/enable-prometheus-scraping` | InferenceService | Enable metrics | `'true'` |
 | `prometheus.io/scrape` | ServingRuntime | Enable Prometheus scraping | `'true'` |
